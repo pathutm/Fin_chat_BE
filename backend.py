@@ -1,26 +1,29 @@
 import os
-import asyncio
+
+import httpx2
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 
 
 load_dotenv()
 
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+ANTHROPIC_ENVIRONMENT_ID = os.getenv("ANTHROPIC_ENVIRONMENT_ID")
 SUPABASE_PROJECT_REF = os.getenv("SUPABASE_PROJECT_REF")
 SUPABASE_ACCESS_TOKEN = os.getenv("SUPABASE_ACCESS_TOKEN")
 
 
 if not ANTHROPIC_API_KEY:
     raise ValueError("ANTHROPIC_API_KEY is missing")
+
+if not ANTHROPIC_ENVIRONMENT_ID:
+    raise ValueError("ANTHROPIC_ENVIRONMENT_ID is missing")
 
 if not SUPABASE_PROJECT_REF:
     raise ValueError("SUPABASE_PROJECT_REF is missing")
@@ -29,10 +32,7 @@ if not SUPABASE_ACCESS_TOKEN:
     raise ValueError("SUPABASE_ACCESS_TOKEN is missing")
 
 
-client = Anthropic(
-    api_key=ANTHROPIC_API_KEY
-)
-
+client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -58,28 +58,24 @@ finance_agent = client.beta.agents.create(
     name="Finance Agent",
     model=MODEL,
     system=SECURITY_PROMPT + """
-Answer finance questions using the authorized finance database.
+Answer finance questions using the finance database.
+Use only relevant information from the database.
 
-When the user asks for employee, salary, company, asset,
-liability, working capital, reporting, or financial ratio
-information, use the get_finance_data tool.
+The finance table is ultimate_finance_data.
 
-Do not refuse authorized database information because it is
-financial information.
-
-Use only the data returned by the tool.
+Generate only read-only SQL queries for this table.
 """,
     tools=[
         {
             "type": "custom",
             "name": "get_finance_data",
-            "description": "Retrieve authorized finance data from Supabase using read-only SQL.",
+            "description": "Retrieve finance data from the ultimate_finance_data table using read-only SQL.",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "A read-only SQL query."
+                        "description": "Read-only SQL query for the ultimate_finance_data table."
                     }
                 },
                 "required": ["query"]
@@ -93,13 +89,10 @@ coordination_agent = client.beta.agents.create(
     name="Coordination Agent",
     model=MODEL,
     system=SECURITY_PROMPT + """
-You are the main coordination agent.
+Route each request to the appropriate agent.
 
-Route general questions to General Agent.
-
-Route finance and database questions to Finance Agent.
-
-Return the appropriate agent's final answer to the user.
+Use Finance Agent for finance and database-related questions.
+Use General Agent for general questions.
 """,
     multiagent={
         "type": "coordinator",
@@ -132,34 +125,31 @@ HEADERS = {
 
 async def connect_to_supabase_mcp():
 
-    async with streamablehttp_client(
-        SUPABASE_MCP_URL,
-        headers=HEADERS,
-        terminate_on_close=False
-    ) as (read, write, _):
+    async with httpx2.AsyncClient(headers=HEADERS) as http_client:
 
-        async with ClientSession(read, write) as session:
+        async with streamable_http_client(
+            SUPABASE_MCP_URL,
+            http_client=http_client
+        ) as (read, write):
 
-            await session.initialize()
+            async with ClientSession(read, write) as session:
 
-            tools_result = await session.list_tools()
+                await session.initialize()
 
-            print("Connected to Supabase MCP Server")
+                tools_result = await session.list_tools()
 
-            for tool in tools_result.tools:
-                print("-", tool.name)
+                print("Connected to Supabase MCP Server")
 
-            return [
-                tool.name
-                for tool in tools_result.tools
-            ]
+                for tool in tools_result.tools:
+                    print("-", tool.name)
+
+                return [tool.name for tool in tools_result.tools]
 
 
 async def fetch_finance_data(query: str):
 
     if not query or not query.strip():
         raise ValueError("SQL query cannot be empty")
-
 
     blocked_commands = [
         "INSERT",
@@ -171,9 +161,7 @@ async def fetch_finance_data(query: str):
         "CREATE"
     ]
 
-
     query_upper = query.upper()
-
 
     for command in blocked_commands:
 
@@ -182,175 +170,43 @@ async def fetch_finance_data(query: str):
                 f"Blocked SQL operation: {command}"
             )
 
+    async with httpx2.AsyncClient(headers=HEADERS) as http_client:
 
-    async with streamablehttp_client(
-        SUPABASE_MCP_URL,
-        headers=HEADERS,
-        terminate_on_close=False
-    ) as (read, write, _):
+        async with streamable_http_client(
+            SUPABASE_MCP_URL,
+            http_client=http_client
+        ) as (read, write):
 
-        async with ClientSession(read, write) as session:
+            async with ClientSession(read, write) as session:
 
-            await session.initialize()
+                await session.initialize()
 
-            result = await session.call_tool(
-                "execute_sql",
-                {
-                    "query": query
-                }
-            )
+                result = await session.call_tool(
+                    "execute_sql",
+                    {"query": query}
+                )
 
-
-            if hasattr(result, "content"):
-
-                texts = []
-
-                for item in result.content:
-
-                    if hasattr(item, "text"):
-                        texts.append(item.text)
-
-                if texts:
-                    return "\n".join(texts)
+                return result
 
 
-            return str(result)
+def extract_tool_result(result):
+
+    if hasattr(result, "content"):
+
+        texts = []
+
+        for item in result.content:
+
+            if hasattr(item, "text"):
+                texts.append(item.text)
+
+        if texts:
+            return "\n".join(texts)
+
+    return str(result)
 
 
-environment = client.beta.environments.create(
-    name="finchat-env"
-)
-
-
-async def run_agent(question: str):
-
-    session = client.beta.sessions.create(
-        agent=coordination_agent.id,
-        environment_id=environment.id
-    )
-
-
-    client.beta.sessions.events.send(
-        session.id,
-        events=[
-            {
-                "type": "user.message",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": question
-                    }
-                ]
-            }
-        ]
-    )
-
-
-    processed_events = set()
-
-
-    for _ in range(60):
-
-        await asyncio.sleep(1)
-
-
-        events_page = client.beta.sessions.events.list(
-            session.id
-        )
-
-
-        for event in events_page.data:
-
-            if event.id in processed_events:
-                continue
-
-
-            processed_events.add(event.id)
-
-
-            if event.type == "agent.custom_tool_use":
-
-                if event.name == "get_finance_data":
-
-                    query = event.input.get(
-                        "query",
-                        ""
-                    )
-
-
-                    try:
-
-                        result = await fetch_finance_data(
-                            query
-                        )
-
-
-                        client.beta.sessions.events.send(
-                            session.id,
-                            events=[
-                                {
-                                    "type": "user.custom_tool_result",
-                                    "custom_tool_use_id": event.id,
-                                    "content": [
-                                        {
-                                            "type": "text",
-                                            "text": result
-                                        }
-                                    ]
-                                }
-                            ]
-                        )
-
-
-                    except Exception as error:
-
-                        client.beta.sessions.events.send(
-                            session.id,
-                            events=[
-                                {
-                                    "type": "user.custom_tool_result",
-                                    "custom_tool_use_id": event.id,
-                                    "content": [
-                                        {
-                                            "type": "text",
-                                            "text": str(error)
-                                        }
-                                    ]
-                                }
-                            ]
-                        )
-
-
-            elif event.type == "agent.message":
-
-                response_text = ""
-
-
-                for content in event.content:
-
-                    if hasattr(content, "text"):
-                        response_text += content.text
-
-
-                if response_text.strip():
-                    return response_text
-
-
-    return "The agent did not return a response."
-
-
-app = FastAPI(
-    title="Finance AI Chatbot"
-)
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:4200"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Finance AI Chatbot")
 
 
 class ChatRequest(BaseModel):
@@ -380,31 +236,144 @@ async def mcp_status():
     }
 
 
-@app.post(
-    "/chat",
-    response_model=ChatResponse
-)
-async def chat_endpoint(
-    request: ChatRequest
-):
+@app.post("/chat", response_model=ChatResponse)
+async def chat_endpoint(request: ChatRequest):
 
-    question = request.message.strip()
+    question = request.message
 
+    print(f"\nUser: {question}")
+    print("Starting Coordination Agent...")
 
-    if not question:
-
-        return ChatResponse(
-            response="Please enter a question."
-        )
-
-
-    result = await run_agent(
-        question
+    session = client.beta.sessions.create(
+        agent=coordination_agent.id,
+        environment_id=ANTHROPIC_ENVIRONMENT_ID
     )
 
+    print(f"Session created: {session.id}")
+
+    final_response = ""
+
+    with client.beta.sessions.events.stream(session.id) as stream:
+
+        client.beta.sessions.events.send(
+            session.id,
+            events=[
+                {
+                    "type": "user.message",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": question
+                        }
+                    ]
+                }
+            ]
+        )
+
+        for event in stream:
+
+            print("Event:", event.type)
+
+            if event.type == "agent.custom_tool_use":
+
+                print("Finance Agent requested database data")
+
+                print(
+                    "SQL Query:",
+                    event.input.get("query")
+                )
+
+                try:
+
+                    result = await fetch_finance_data(
+                        event.input.get("query", "")
+                    )
+
+                    tool_result = extract_tool_result(result)
+
+                    print("Database result received")
+
+                    client.beta.sessions.events.send(
+                        session.id,
+                        events=[
+                            {
+                                "type": "user.custom_tool_result",
+                                "custom_tool_use_id": event.id,
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": tool_result
+                                    }
+                                ]
+                            }
+                        ]
+                    )
+
+                except Exception as e:
+
+                    print("Database error:", str(e))
+
+                    client.beta.sessions.events.send(
+                        session.id,
+                        events=[
+                            {
+                                "type": "user.custom_tool_result",
+                                "custom_tool_use_id": event.id,
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": f"Database error: {str(e)}"
+                                    }
+                                ]
+                            }
+                        ]
+                    )
+
+            elif event.type == "agent.message":
+
+                text_parts = []
+
+                for block in event.content:
+
+                    if getattr(block, "type", None) == "text":
+                        text_parts.append(block.text)
+
+                if text_parts:
+
+                    final_response = "".join(text_parts)
+
+                    print("Agent:", final_response)
+
+            elif event.type == "session.status_idle":
+
+                stop_reason = getattr(
+                    event,
+                    "stop_reason",
+                    None
+                )
+
+                if stop_reason:
+
+                    reason_type = getattr(
+                        stop_reason,
+                        "type",
+                        None
+                    )
+
+                    if reason_type == "end_turn":
+
+                        print("Request completed")
+
+                        break
+
+    if not final_response:
+
+        final_response = (
+            "Sorry, I could not generate a response."
+        )
 
     return ChatResponse(
-        response=result
+        response=final_response
     )
 
 
