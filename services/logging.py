@@ -31,12 +31,15 @@ async def log_chat(
     tool_request: str | None,
     tool_response: str | None,
     tool_id: str | None,
-    assistant_msg: str
+    assistant_msg: str,
+    user_id: str | None = None
 ):
     log_data = {
+        "User_ID":user_id,
         "User_Name": user_name,
         "Session_Id": session_id,
         "Conversation_Id": conversation_id,
+        "User_Msg": user_msg,
         "Agent": agent,
         "Agent_Id": agent_id,
         "Env_Id": env_id,
@@ -46,18 +49,33 @@ async def log_chat(
         "Assistant_Msg": assistant_msg
     }
 
-    result = (
-        supabase
-        .table("finance_ai_logs")
-        .insert(log_data)
-        .execute()
-    )
+    if user_id is not None:
+        log_data["User_ID"] = user_id
 
-    return result
+    try:
+        result = (
+            supabase
+            .table("finance_ai_logs")
+            .insert(log_data)
+            .execute()
+        )
+        return result
+    except Exception as e:
+        if "User_ID" in log_data and "column" in str(e) and "User_ID" in str(e):
+            del log_data["User_ID"]
+            result = (
+                supabase
+                .table("finance_ai_logs")
+                .insert(log_data)
+                .execute()
+            )
+            return result
+        raise e
 
 
 async def create_process_log(
     user_name: str | None,
+    user_id: str | None,
     session_id: str,
     conversation_id: str | None,
     agent_id: str | None,
@@ -70,10 +88,13 @@ async def create_process_log(
     process_destination: str | None,
     input_data: str | None,
     output_data: str | None,
-    context_window: str | None=None
+    context_window: str | None = None,
+    token_consumed: int | None = None,
+    model_used: str | None = None
 ):
     process_data = {
         "User_Name": user_name,
+        "User_ID": user_id,
         "Session_Id": session_id,
         "Conversation_Id": conversation_id,
         "Agent_Id": agent_id,
@@ -86,14 +107,13 @@ async def create_process_log(
         "Process_Destination": process_destination,
         "Input": input_data,
         "Output": output_data,
-        "Context_Window": context_window
+        "Context_Window": context_window,
+        "Token_Consumed": token_consumed,
+        "Model_Used": model_used
     }
 
-    result = (
-        supabase
-        .table("finance_ai_process_logs")
-        .insert(process_data)
-        .execute()
-    )
+    response = supabase.table(
+        "finance_ai_process_logs"
+    ).insert(process_data).execute()
 
-    return result
+    return response
