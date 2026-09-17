@@ -1,12 +1,6 @@
 from core.config import ANTHROPIC_ENVIRONMENT_ID
 from agents.client import client
-from agents.setup import coordination_agent, finance_agent, general_agent
-from services.memory import get_conversation_context, conversation_history
-from services.db import fetch_finance_data, extract_tool_result
-from services.logging import (
-    log_chat,
-    create_process_log
-)
+
 from agents.setup import (
     coordination_agent,
     finance_agent,
@@ -17,17 +11,47 @@ from agents.setup import (
     COORDINATION_AGENT_PROMPT
 )
 
-async def handle_chat_logic(question: str, conversation_id: str):
+from services.memory import (
+    get_conversation_context,
+    conversation_history
+)
 
-    previous_context = get_conversation_context(conversation_id)
+from services.db import (
+    fetch_finance_data,
+    extract_tool_result
+)
+
+from services.logging import (
+    log_chat,
+    create_process_log
+)
+
+
+MODEL_USED = "claude-haiku-4-5-20251001"
+
+
+async def handle_chat_logic(
+    question: str,
+    conversation_id: str,
+    user_name: str | None = None,
+    user_id: str | None = None
+):
+
+    previous_context = get_conversation_context(
+        conversation_id
+    )
 
     if previous_context:
+
         agent_question = (
             previous_context
             + f"\n\nCurrent user question:\n{question}"
         )
+
     else:
+
         agent_question = question
+
     context_window = f"""
 SECURITY PROMPT:
 {SECURITY_PROMPT}
@@ -60,24 +84,30 @@ CURRENT AGENT INPUT:
         environment_id=ANTHROPIC_ENVIRONMENT_ID
     )
 
-    print("Session created:", session.id)
+    print(
+        "Session created:",
+        session.id
+    )
 
     await create_process_log(
-    user_name=None,
-    session_id=session.id,
-    conversation_id=conversation_id,
-    agent_id=coordination_agent.id,
-    agent_name="Coordination Agent",
-    env_id=ANTHROPIC_ENVIRONMENT_ID,
-    tool_id=None,
-    tool_req=None,
-    tool_response=None,
-    process_initiation="User",
-    process_destination="Coordination Agent",
-    input_data=question,
-    output_data="Coordination Agent started",
-    context_window=context_window
-)
+        user_name=user_name,
+        user_id=user_id,
+        session_id=session.id,
+        conversation_id=conversation_id,
+        agent_id=coordination_agent.id,
+        agent_name="Coordination Agent",
+        env_id=ANTHROPIC_ENVIRONMENT_ID,
+        tool_id=None,
+        tool_req=None,
+        tool_response=None,
+        process_initiation="User",
+        process_destination="Coordination Agent",
+        input_data=question,
+        output_data="Coordination Agent started",
+        context_window=context_window,
+        token_consumed=None,
+        model_used=MODEL_USED
+    )
 
     final_response = ""
 
@@ -90,7 +120,12 @@ CURRENT AGENT INPUT:
     tool_response = None
     tool_id = None
 
-    with client.beta.sessions.events.stream(session.id) as stream:
+    # Latest token usage for the current process
+    current_token_consumed = None
+
+    with client.beta.sessions.events.stream(
+        session.id
+    ) as stream:
 
         client.beta.sessions.events.send(
             session.id,
@@ -108,7 +143,8 @@ CURRENT AGENT INPUT:
         )
 
         await create_process_log(
-            user_name=None,
+            user_name=user_name,
+            user_id=user_id,
             session_id=session.id,
             conversation_id=conversation_id,
             agent_id=coordination_agent.id,
@@ -120,13 +156,116 @@ CURRENT AGENT INPUT:
             process_initiation="User",
             process_destination="Coordination Agent",
             input_data=agent_question,
-            output_data="User message sent to Coordination Agent"
+            output_data="User message sent to Coordination Agent",
+            token_consumed=None,
+            model_used=MODEL_USED
         )
 
         for event in stream:
 
-            # Agent thread created
-            if event.type == "session.thread_created":
+            # ==================================================
+            # TOKEN USAGE
+            # ==================================================
+
+            if event.type == "span.model_request_end":
+
+                model_usage = getattr(
+                    event,
+                    "model_usage",
+                    None
+                )
+
+                if model_usage:
+
+                    input_tokens = getattr(
+                        model_usage,
+                        "input_tokens",
+                        0
+                    ) or 0
+
+                    output_tokens = getattr(
+                        model_usage,
+                        "output_tokens",
+                        0
+                    ) or 0
+
+                    cache_read_tokens = getattr(
+                        model_usage,
+                        "cache_read_input_tokens",
+                        0
+                    ) or 0
+
+                    cache_creation_tokens = getattr(
+                        model_usage,
+                        "cache_creation_input_tokens",
+                        0
+                    ) or 0
+
+                    current_token_consumed = (
+                        input_tokens
+                        + output_tokens
+                        + cache_read_tokens
+                        + cache_creation_tokens
+                    )
+
+                    print(
+                        "\nToken Usage:"
+                    )
+
+                    print(
+                        "Input Tokens:",
+                        input_tokens
+                    )
+
+                    print(
+                        "Output Tokens:",
+                        output_tokens
+                    )
+
+                    print(
+                        "Cache Read Tokens:",
+                        cache_read_tokens
+                    )
+
+                    print(
+                        "Cache Creation Tokens:",
+                        cache_creation_tokens
+                    )
+
+                    print(
+                        "Total Tokens:",
+                        current_token_consumed
+                    )
+
+                    print(
+                        "Model:",
+                        MODEL_USED
+                    )
+
+                    await create_process_log(
+                        user_name=user_name,
+                        user_id=user_id,
+                        session_id=session.id,
+                        conversation_id=conversation_id,
+                        agent_id=generated_agent_id,
+                        agent_name=generated_agent,
+                        env_id=ANTHROPIC_ENVIRONMENT_ID,
+                        tool_id=tool_id,
+                        tool_req=tool_request,
+                        tool_response=tool_response,
+                        process_initiation="Model",
+                        process_destination=generated_agent,
+                        input_data=question,
+                        output_data="Model request completed",
+                        token_consumed=current_token_consumed,
+                        model_used=MODEL_USED
+                    )
+
+            # ==================================================
+            # AGENT THREAD CREATED
+            # ==================================================
+
+            elif event.type == "session.thread_created":
 
                 agent_name = getattr(
                     event,
@@ -140,7 +279,10 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
-                        participating_agents.append(agent_name)
+
+                        participating_agents.append(
+                            agent_name
+                        )
 
                     print(
                         "Coordination Agent →",
@@ -154,7 +296,8 @@ CURRENT AGENT INPUT:
                     )
 
                     await create_process_log(
-                        user_name=None,
+                        user_name=user_name,
+                        user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
                         agent_id=agent_object.id,
@@ -166,10 +309,15 @@ CURRENT AGENT INPUT:
                         process_initiation="Coordination Agent",
                         process_destination=agent_name,
                         input_data=question,
-                        output_data="Request routed to agent"
+                        output_data="Request routed to agent",
+                        token_consumed=None,
+                        model_used=MODEL_USED
                     )
 
-            # Finance Agent custom tool
+            # ==================================================
+            # FINANCE AGENT CUSTOM TOOL
+            # ==================================================
+
             elif event.type == "agent.custom_tool_use":
 
                 query = event.input.get(
@@ -181,14 +329,18 @@ CURRENT AGENT INPUT:
                 tool_id = event.id
 
                 print(
-                    "Finance Agent → get_finance_data"
+                    "\nFinance Agent → get_finance_data"
                 )
 
-                print("SQL Query:")
+                print(
+                    "SQL Query:"
+                )
+
                 print(query)
 
                 await create_process_log(
-                    user_name=None,
+                    user_name=user_name,
+                    user_id=user_id,
                     session_id=session.id,
                     conversation_id=conversation_id,
                     agent_id=finance_agent.id,
@@ -200,12 +352,16 @@ CURRENT AGENT INPUT:
                     process_initiation="Finance Agent",
                     process_destination="get_finance_data",
                     input_data=query,
-                    output_data="Tool request generated"
+                    output_data="Tool request generated",
+                    token_consumed=None,
+                    model_used=MODEL_USED
                 )
 
                 try:
 
-                    result = await fetch_finance_data(query)
+                    result = await fetch_finance_data(
+                        query
+                    )
 
                     tool_result = extract_tool_result(
                         result
@@ -220,7 +376,8 @@ CURRENT AGENT INPUT:
                     print(tool_result)
 
                     await create_process_log(
-                        user_name=None,
+                        user_name=user_name,
+                        user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
                         agent_id=finance_agent.id,
@@ -232,7 +389,9 @@ CURRENT AGENT INPUT:
                         process_initiation="get_finance_data",
                         process_destination="Finance Agent",
                         input_data=query,
-                        output_data=tool_result
+                        output_data=tool_result,
+                        token_consumed=None,
+                        model_used=MODEL_USED
                     )
 
                     client.beta.sessions.events.send(
@@ -263,7 +422,8 @@ CURRENT AGENT INPUT:
                     )
 
                     await create_process_log(
-                        user_name=None,
+                        user_name=user_name,
+                        user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
                         agent_id=finance_agent.id,
@@ -275,7 +435,9 @@ CURRENT AGENT INPUT:
                         process_initiation="get_finance_data",
                         process_destination="Finance Agent",
                         input_data=query,
-                        output_data=tool_response
+                        output_data=tool_response,
+                        token_consumed=None,
+                        model_used=MODEL_USED
                     )
 
                     client.beta.sessions.events.send(
@@ -294,7 +456,10 @@ CURRENT AGENT INPUT:
                         ]
                     )
 
-            # Sub-agent response received
+            # ==================================================
+            # SUB-AGENT RESPONSE
+            # ==================================================
+
             elif event.type == "agent.thread_message_received":
 
                 agent_name = getattr(
@@ -309,6 +474,7 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
+
                         participating_agents.append(
                             agent_name
                         )
@@ -325,7 +491,8 @@ CURRENT AGENT INPUT:
                     )
 
                     await create_process_log(
-                        user_name=None,
+                        user_name=user_name,
+                        user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
                         agent_id=agent_object.id,
@@ -337,10 +504,15 @@ CURRENT AGENT INPUT:
                         process_initiation=agent_name,
                         process_destination="Coordination Agent",
                         input_data=question,
-                        output_data=f"{agent_name} response received"
+                        output_data=f"{agent_name} response received",
+                        token_consumed=current_token_consumed,
+                        model_used=MODEL_USED
                     )
 
-            # Agent message
+            # ==================================================
+            # AGENT MESSAGE
+            # ==================================================
+
             elif event.type == "agent.message":
 
                 text_parts = []
@@ -366,13 +538,14 @@ CURRENT AGENT INPUT:
                     final_response = response_text
 
                     print(
-                        "Agent response:"
+                        "\nAgent response:"
                     )
 
                     print(response_text)
 
                     await create_process_log(
-                        user_name=None,
+                        user_name=user_name,
+                        user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
                         agent_id=generated_agent_id,
@@ -384,10 +557,15 @@ CURRENT AGENT INPUT:
                         process_initiation="Agent",
                         process_destination="Coordination Agent",
                         input_data=question,
-                        output_data=response_text
+                        output_data=response_text,
+                        token_consumed=current_token_consumed,
+                        model_used=MODEL_USED
                     )
 
-            # Session completed
+            # ==================================================
+            # SESSION COMPLETED
+            # ==================================================
+
             elif event.type == "session.status_idle":
 
                 stop_reason = getattr(
@@ -407,11 +585,12 @@ CURRENT AGENT INPUT:
                     if reason_type == "end_turn":
 
                         print(
-                            "Request completed"
+                            "\nRequest completed"
                         )
 
                         await create_process_log(
-                            user_name=None,
+                            user_name=user_name,
+                            user_id=user_id,
                             session_id=session.id,
                             conversation_id=conversation_id,
                             agent_id=coordination_agent.id,
@@ -423,10 +602,16 @@ CURRENT AGENT INPUT:
                             process_initiation="Coordination Agent",
                             process_destination="User",
                             input_data=question,
-                            output_data="Request completed"
+                            output_data="Request completed",
+                            token_consumed=current_token_consumed,
+                            model_used=MODEL_USED
                         )
 
                         break
+
+    # ==================================================
+    # FALLBACK RESPONSE
+    # ==================================================
 
     if not final_response:
 
@@ -435,7 +620,8 @@ CURRENT AGENT INPUT:
         )
 
         await create_process_log(
-            user_name=None,
+            user_name=user_name,
+            user_id=user_id,
             session_id=session.id,
             conversation_id=conversation_id,
             agent_id=coordination_agent.id,
@@ -447,7 +633,9 @@ CURRENT AGENT INPUT:
             process_initiation="Coordination Agent",
             process_destination="User",
             input_data=question,
-            output_data=final_response
+            output_data=final_response,
+            token_consumed=current_token_consumed,
+            model_used=MODEL_USED
         )
 
     if participating_agents:
@@ -463,7 +651,8 @@ CURRENT AGENT INPUT:
     )
 
     await create_process_log(
-        user_name=None,
+        user_name=user_name,
+        user_id=user_id,
         session_id=session.id,
         conversation_id=conversation_id,
         agent_id=generated_agent_id,
@@ -475,10 +664,15 @@ CURRENT AGENT INPUT:
         process_initiation="Coordination Agent",
         process_destination="User",
         input_data=question,
-        output_data=final_response
+        output_data=final_response,
+        token_consumed=current_token_consumed,
+        model_used=MODEL_USED
     )
 
-    # Save conversation history
+    # ==================================================
+    # SAVE CONVERSATION HISTORY
+    # ==================================================
+
     conversation_history.setdefault(
         conversation_id,
         []
@@ -503,9 +697,13 @@ CURRENT AGENT INPUT:
         conversation_id
     )
 
-    # Log complete chat
+    # ==================================================
+    # LOG COMPLETE CHAT
+    # ==================================================
+
     await log_chat(
-        user_name=None,
+        user_name=user_name,
+        user_id=user_id,
         session_id=session.id,
         conversation_id=conversation_id,
         user_msg=question,

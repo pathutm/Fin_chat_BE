@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+
 from schemas.chat import ChatRequest, ChatResponse
 from services.chat import handle_chat_logic
 from services.memory import conversation_history
@@ -6,11 +7,13 @@ from guardrails.actions import check_input_guardrail, check_output_guardrail
 
 app = FastAPI(title="Finance AI Chatbot")
 
+
 @app.get("/")
 def home():
     return {
         "message": "Finance AI Chatbot is running"
     }
+
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
@@ -33,7 +36,9 @@ async def chat_endpoint(request: ChatRequest):
     print("=" * 50)
     raw_response, generated_agent = await handle_chat_logic(
         request.message,
-        request.conversation_id
+        request.conversation_id,
+        user_name=request.user_name,
+        user_id=request.user_id
     )
 
     # -----------------------------------------------------------------------
