@@ -73,6 +73,17 @@ async def log_chat(
         raise e
 
 
+def _clean_uuid(val: str | None) -> str | None:
+    if not val:
+        return None
+    import uuid
+    try:
+        uuid.UUID(str(val))
+        return str(val)
+    except (ValueError, AttributeError):
+        return None
+
+
 async def create_process_log(
     user_name: str | None,
     user_id: str | None,
@@ -92,9 +103,10 @@ async def create_process_log(
     token_consumed: int | None = None,
     model_used: str | None = None
 ):
+    clean_user_id = _clean_uuid(user_id)
     process_data = {
         "User_Name": user_name,
-        "User_ID": user_id,
+        "User_ID": clean_user_id,
         "Session_Id": session_id,
         "Conversation_Id": conversation_id,
         "Agent_Id": agent_id,
@@ -103,17 +115,19 @@ async def create_process_log(
         "Tool_Id": tool_id,
         "Tool_Req": tool_req,
         "Tool_Response": tool_response,
-        "Process_Initiation": process_initiation,
-        "Process_Destination": process_destination,
+        "Parent_Agent": process_initiation,
+        "Child_Agent": process_destination,
         "Input": input_data,
         "Output": output_data,
         "Context_Window": context_window,
-        "Token_Consumed": token_consumed,
         "Model_Used": model_used
     }
 
-    response = supabase.table(
-        "finance_ai_process_logs"
-    ).insert(process_data).execute()
-
-    return response
+    try:
+        response = supabase.table(
+            "finance_ai_process_logs"
+        ).insert(process_data).execute()
+        return response
+    except Exception as e:
+        print(f"[Logging] create_process_log warning: {e}")
+        return None

@@ -1,6 +1,6 @@
 import httpx2
 from mcp import ClientSession
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client
 from core.config import SUPABASE_PROJECT_REF, SUPABASE_ACCESS_TOKEN
 
 SUPABASE_MCP_URL = (
