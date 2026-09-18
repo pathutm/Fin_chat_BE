@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-
 from schemas.chat import ChatRequest, ChatResponse
 from services.chat import handle_chat_logic
 from services.memory import conversation_history
@@ -9,8 +8,20 @@ from guardrails.actions import (
     check_output_guardrail
 )
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="Finance AI Chatbot")
 
+# Add CORS middleware to allow the frontend to communicate with the backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:4200", "http://127.0.0.1:4200"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+GUARDRAIL_MODEL = "openai/gpt-oss-20b"
 
 @app.get("/")
 def home():
@@ -18,14 +29,12 @@ def home():
         "message": "Finance AI Chatbot is running"
     }
 
-
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
     is_allowed, input_fallback = await check_input_guardrail(
         request.message
     )
 
-    # Log Input Guardrail process
     await create_process_log(
         user_name=request.user_name,
         user_id=request.user_id,
@@ -37,8 +46,8 @@ async def chat_endpoint(request: ChatRequest):
         tool_id=None,
         tool_req=None,
         tool_response=None,
-        process_initiation="User",
-        process_destination="Input Guardrail",
+        parent_agent="User",
+        child_agent="Input Guardrail",
         input_data=request.message,
         output_data=(
             "Input Guardrail ALLOWED"
@@ -46,8 +55,9 @@ async def chat_endpoint(request: ChatRequest):
             else "Input Guardrail BLOCKED"
         ),
         context_window=None,
-        token_consumed=None,
-        model_used="openai/gpt-oss-20b"
+        input_tokens=None,
+        output_tokens=None,
+        model_used=GUARDRAIL_MODEL
     )
 
     if not is_allowed:
@@ -56,10 +66,8 @@ async def chat_endpoint(request: ChatRequest):
             agent="Input Guardrail"
         )
 
-    print("=" * 50)
-    print("[COORDINATION AGENT]")
+    print("\nCoordination Agent")
     print("User message passed to Coordination Agent")
-    print("=" * 50)
 
     raw_response, generated_agent = await handle_chat_logic(
         request.message,
@@ -72,7 +80,6 @@ async def chat_endpoint(request: ChatRequest):
         raw_response
     )
 
-    # Log Output Guardrail process
     await create_process_log(
         user_name=request.user_name,
         user_id=request.user_id,
@@ -84,8 +91,8 @@ async def chat_endpoint(request: ChatRequest):
         tool_id=None,
         tool_req=None,
         tool_response=None,
-        process_initiation="Coordination Agent",
-        process_destination="Output Guardrail",
+        parent_agent=generated_agent,
+        child_agent="Output Guardrail",
         input_data=raw_response,
         output_data=(
             "Output Guardrail ALLOWED"
@@ -93,8 +100,9 @@ async def chat_endpoint(request: ChatRequest):
             else "Output Guardrail FORMATTED"
         ),
         context_window=None,
-        token_consumed=None,
-        model_used="openai/gpt-oss-20b"
+        input_tokens=None,
+        output_tokens=None,
+        model_used=GUARDRAIL_MODEL
     )
 
     if (
@@ -117,13 +125,14 @@ async def chat_endpoint(request: ChatRequest):
         tool_id=None,
         tool_req=None,
         tool_response=None,
-        process_initiation="Output Guardrail",
-        process_destination="User",
+        parent_agent="Output Guardrail",
+        child_agent="User",
         input_data=raw_response,
         output_data=final_safe_response,
         context_window=None,
-        token_consumed=None,
-        model_used="openai/gpt-oss-20b"
+        input_tokens=None,
+        output_tokens=None,
+        model_used=GUARDRAIL_MODEL
     )
 
     return ChatResponse(

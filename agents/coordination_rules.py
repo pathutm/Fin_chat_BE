@@ -6,9 +6,9 @@ def coordination_rule(
     Coordination Agent Rules
 
     Rules:
-    4. Currency Conversion
-    9. Output Formatting
-    11. Concise Final Response
+    1. Currency Conversion
+    2. Output Formatting
+    3. Concise Final Response
     """
 
     # Convert the user's question to lowercase

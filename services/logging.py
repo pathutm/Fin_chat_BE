@@ -1,5 +1,4 @@
 import os
-
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
@@ -19,7 +18,6 @@ supabase: Client = create_client(
     SUPABASE_SERVICE_ROLE_KEY
 )
 
-
 async def log_chat(
     user_name: str | None,
     session_id: str | None,
@@ -35,7 +33,7 @@ async def log_chat(
     user_id: str | None = None
 ):
     log_data = {
-        "User_ID":user_id,
+        "User_ID": user_id,
         "User_Name": user_name,
         "Session_Id": session_id,
         "Conversation_Id": conversation_id,
@@ -48,9 +46,6 @@ async def log_chat(
         "Tool_Id": tool_id,
         "Assistant_Msg": assistant_msg
     }
-
-    if user_id is not None:
-        log_data["User_ID"] = user_id
 
     try:
         result = (
@@ -72,7 +67,6 @@ async def log_chat(
             return result
         raise e
 
-
 async def create_process_log(
     user_name: str | None,
     user_id: str | None,
@@ -84,12 +78,13 @@ async def create_process_log(
     tool_id: str | None,
     tool_req: str | None,
     tool_response: str | None,
-    process_initiation: str | None,
-    process_destination: str | None,
+    parent_agent: str | None,
+    child_agent: str | None,
     input_data: str | None,
     output_data: str | None,
     context_window: str | None = None,
-    token_consumed: int | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
     model_used: str | None = None
 ):
     process_data = {
@@ -103,17 +98,21 @@ async def create_process_log(
         "Tool_Id": tool_id,
         "Tool_Req": tool_req,
         "Tool_Response": tool_response,
-        "Process_Initiation": process_initiation,
-        "Process_Destination": process_destination,
+        "Parent_Agent": parent_agent,
+        "Child_Agent": child_agent,
         "Input": input_data,
         "Output": output_data,
         "Context_Window": context_window,
-        "Token_Consumed": token_consumed,
-        "Model_Used": model_used
+        "Model_Used": model_used,
+        "Input_Tokens": input_tokens,
+        "Output_Tokens": output_tokens
     }
 
-    response = supabase.table(
-        "finance_ai_process_logs"
-    ).insert(process_data).execute()
+    response = (
+        supabase
+        .table("finance_ai_process_logs")
+        .insert(process_data)
+        .execute()
+    )
 
     return response
