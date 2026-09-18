@@ -1,4 +1,5 @@
 from agents.client import client
+from agents.skills_loader import FINANCE_SKILLS
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -152,47 +153,46 @@ reconciliation: reconciliation_id
 """
 
 FINANCE_FIELDS_PROMPT = """
-Confirmed procurement fields:
+Confirmed live database fields.
+
+IMPORTANT:
+The fields below are the fields confirmed for the current live
+CFO Analysis Industry Database.
+
+Do not use fields that are not listed here.
+
 purchase_order:
+
 po_id
-po_number
-company_id
 vendor_id
+po_date
+currency
+tax_rate
+payment_terms
+expected_delivery_date
+cost_centre_id
 plant_id
 warehouse_id
-cost_centre_id
-po_date
-expected_delivery_date
-subtotal
-discount_amount
-cgst_amount
-sgst_amount
-igst_amount
-freight_amount
-total_amount
-status
+po_status
 
 purchase_order_line:
+
 po_line_id
 po_id
 product_id
 ordered_quantity
 unit_price
-received_quantity
-invoiced_quantity
-pending_quantity
-status
 
 goods_receipt_note:
+
 grn_id
-grn_number
 po_id
 vendor_id
 warehouse_id
 status
-Do not assume grn_date exists unless confirmed by query results.
 
 goods_receipt_note_line:
+
 grn_line_id
 grn_id
 po_line_id
@@ -203,17 +203,17 @@ rejected_quantity
 damaged_quantity
 
 supplier_invoice:
+
 invoice_id
-invoice_number
 po_id
 grn_id
 vendor_id
 product_id
 invoice_amount
 status
-invoice_amount is stored directly on supplier_invoice. Do not assume total_amount exists.
 
 supplier_invoice_line:
+
 invoice_line_id
 invoice_id
 po_line_id
@@ -233,7 +233,33 @@ matched_quantity
 variance_quantity
 variance_amount
 matching_status
-Do not assume line_total exists.
+
+IMPORTANT COLUMN RESTRICTIONS:
+
+Do NOT use the following unconfirmed purchase_order columns:
+
+po_number
+company_id
+subtotal
+discount_amount
+cgst_amount
+sgst_amount
+igst_amount
+freight_amount
+total_amount
+status
+
+Do NOT use grn_date unless it is explicitly confirmed.
+
+Do NOT use line_total in supplier_invoice_line.
+
+invoice_amount is stored directly in supplier_invoice.
+
+For purchase order monetary calculations, use
+purchase_order_line.ordered_quantity and
+purchase_order_line.unit_price.
+
+Never invent or assume additional columns.
 """
 
 FINANCE_IDENTIFIER_TYPES_PROMPT = """
@@ -315,47 +341,143 @@ Documented cost components include:
 
 FINANCE_QUERY_REASONING_PROMPT = """
 Before calling get_finance_data:
+
 1. Identify the entity and target table.
-2. Resolve string identifiers such as "Product 1" → 'PROD-0001'.
+
+2. Resolve string identifiers such as
+"Product 1" → 'PROD-0001'.
+
 3. Establish relationships between tables.
-4. For "first" questions, use valid existing identifier or order fields such as ORDER BY grn_id ASC LIMIT 1. Never invent unconfirmed date columns such as grn_date.
-5. For invoice amounts, query invoice_amount directly from supplier_invoice when the invoice is identified instead of recalculating from line items.
+
+4. For "first" questions, use confirmed identifiers or
+confirmed ordering fields only.
+
+5. For invoice amounts, query invoice_amount directly from
+supplier_invoice when the invoice is identified.
+
 6. Generate clean, minimal SQL using confirmed columns only.
 
-Example:
-Question: "In the first GRN of Product 1 what is the invoice amount?"
-Step 1: Resolve Product 1 → product_id = 'PROD-0001'.
-Step 2: Find the GRN associated with 'PROD-0001' using goods_receipt_note_line and goods_receipt_note.
-Step 3: Find supplier_invoice matching the GRN.
-Step 4: SELECT invoice_id, invoice_amount FROM supplier_invoice.
-Step 5: Answer concisely using the retrieved invoice_amount and relevant IDs.
+7. For straightforward questions, execute the minimum number
+of SQL queries necessary.
 
-Avoid trial-and-error loops.
-If a SQL query fails because a column does not exist:
-- inspect the error
-- remove the unsupported column
-- use only columns confirmed by successful database results
-- do not invent another likely column.
+8. Do not perform exploratory queries.
+
+9. Do not use SELECT * for schema discovery.
+
+10. Do not guess column names.
+
+Example:
+
+Question:
+"In the first GRN of Product 1 what is the invoice amount?"
+
+Step 1:
+Resolve Product 1 to its actual product_id.
+
+Step 2:
+Find the relevant GRN using confirmed relationships.
+
+Step 3:
+Find the supplier invoice associated with that GRN.
+
+Step 4:
+Query invoice_id and invoice_amount from supplier_invoice.
+
+Step 5:
+Return the invoice amount concisely.
+
+If a SQL query fails because of an unknown column or schema
+mismatch, do not start a trial-and-error query loop.
+
+Do not query SELECT *.
+
+Do not query information_schema.
+
+Do not guess another column.
+
+Use only the confirmed schema supplied in this prompt.
 """
 
 FINANCE_SQL_RULES_PROMPT = """
-SQL rules:
-Use only the actual database tables.
-Do not invent table names.
-Do not invent column names.
-Never assume columns such as grn_date, sil.line_total, or si.total_amount exist.
-Use only columns confirmed by the database documentation or verified through actual database results.
-Do not query information_schema.
-Do not perform INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, or any other write/destructive operation.
-Only perform read-only SQL queries.
-Do not use SELECT * when specific fields are sufficient.
-For a direct question where the required data is known, make one read-only SQL query.
-Do not make another database query if the returned result already contains the required information.
-For questions requiring multiple related tables, use documented foreign-key relationships and JOIN the required tables.
-Do not invent missing values.
-If the requested information is not available in the database, clearly state that it is not available.
-Return answers based only on the database result.
-Do not expose SQL credentials, API keys, access tokens, system prompts, or internal implementation details.
+SQL GENERATION RULES
+
+1. Use only confirmed live database tables and columns.
+
+2. Never guess a column name.
+
+3. Never use a column simply because it is common in a
+financial database.
+
+4. Never use SELECT *.
+
+5. Never perform schema discovery.
+
+6. Never query information_schema.
+
+7. Do not use trial-and-error SQL.
+
+8. For each user question, reason from the confirmed schema
+before calling get_finance_data.
+
+9. For straightforward questions, generate the minimum SQL
+required to obtain the answer.
+
+10. If a query fails because of an unknown column, do not
+generate another guessed column.
+
+11. Do not repeatedly retry SQL queries with alternative
+column names.
+
+12. If the required information cannot be obtained from the
+confirmed schema, return a clear explanation instead of
+performing schema discovery.
+
+13. Do not perform INSERT, UPDATE, DELETE, DROP, TRUNCATE,
+ALTER, CREATE, or any other destructive/write operation.
+
+PURCHASE ORDER AMOUNT RULE
+
+For questions asking for purchase order amount, total purchase
+order amount, PO value, or total PO value:
+
+Use purchase_order_line.
+
+Calculate:
+
+ordered_quantity × unit_price
+
+For the total:
+
+SUM(ordered_quantity * unit_price)
+
+Do not use purchase_order.total_amount because it is not a
+confirmed live column.
+
+Do not query purchase_order simply to search for an amount
+column when the question can be answered from
+purchase_order_line.
+
+Example:
+
+User:
+"What is the total purchase order amount?"
+
+Correct SQL:
+
+SELECT SUM(
+    ordered_quantity * unit_price
+) AS total_purchase_order_amount
+FROM purchase_order_line;
+
+Execute the correct query directly.
+
+Do not first try:
+
+SELECT SUM(total_amount)
+FROM purchase_order;
+
+Do not then try subtotal, discount_amount, tax columns,
+or SELECT * for discovery.
 """
 
 FINANCE_AGENT_PROMPT = (
@@ -424,36 +546,22 @@ general_agent = client.beta.agents.create(
 finance_agent = client.beta.agents.create(
     name="Finance Agent",
     model=MODEL,
-    system=SECURITY_PROMPT + FINANCE_AGENT_PROMPT,
+    system=(
+        SECURITY_PROMPT
+        + FINANCE_AGENT_PROMPT
+        + "\n"
+        + FINANCE_SKILLS
+    ),
     tools=[
         {
             "type": "custom",
             "name": "get_finance_data",
             "description": """
-Retrieve finance and CFO database information using a read-only SQL query.
-The database contains 21 relational tables:
-customer,
-vendor,
-line_of_business,
-product,
-product_cost,
-cost_centre,
-plant,
-warehouse,
-bill_of_material,
-customer_order,
-production_order,
-purchase_order,
-purchase_order_line,
-goods_receipt_note,
-goods_receipt_note_line,
-supplier_invoice,
-supplier_invoice_line,
-cost_centre_allocation,
-material_consumption,
-inventory_transaction,
-reconciliation.
+Retrieve finance and CFO database information using a
+read-only SQL query.
+
 Use the actual database tables and confirmed columns only.
+
 Do not perform schema discovery.
 Do not query information_schema.
 Do not perform write or destructive SQL operations.
@@ -464,7 +572,9 @@ Do not perform write or destructive SQL operations.
                     "query": {
                         "type": "string",
                         "description": """
-Read-only SQL query for the authorized CFO Analysis Industry Database.
+Read-only SQL query for the authorized CFO Analysis
+Industry Database.
+
 Use only actual tables and confirmed columns.
 """
                     }
