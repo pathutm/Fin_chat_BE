@@ -1,6 +1,6 @@
 from core.config import ANTHROPIC_ENVIRONMENT_ID
-from agents.client import client
 
+from agents.client import client
 from agents.setup import (
     coordination_agent,
     finance_agent,
@@ -26,6 +26,8 @@ from services.logging import (
     create_process_log
 )
 
+from agents.coordination_rules import coordination_rule
+
 
 MODEL_USED = "claude-haiku-4-5-20251001"
 
@@ -36,21 +38,26 @@ async def handle_chat_logic(
     user_name: str | None = None,
     user_id: str | None = None
 ):
-
     previous_context = get_conversation_context(
         conversation_id
     )
 
     if previous_context:
-
         agent_question = (
             previous_context
             + f"\n\nCurrent user question:\n{question}"
         )
-
     else:
-
         agent_question = question
+
+    # Apply Coordination Agent rules
+    coordination_process = coordination_rule(question)
+    print("\n========== COORDINATION RULE ==========")
+    print("Question:", question)
+    print("Money Related:", coordination_process["currency_conversion_required"])
+    print("Target Currency:", coordination_process["target_currency"])
+    print("Currency Reason:", coordination_process["currency_reason"])
+    print("=======================================\n")
 
     context_window = f"""
 SECURITY PROMPT:
@@ -64,6 +71,16 @@ FINANCE AGENT:
 
 GENERAL AGENT:
 {GENERAL_AGENT_PROMPT}
+
+COORDINATION RULES:
+Currency Conversion:
+{coordination_process["currency_reason"]}
+
+Output Formatting:
+{coordination_process["output_format"]}
+
+Final Response:
+{coordination_process["response_rule"]}
 
 PREVIOUS CONVERSATION:
 {previous_context if previous_context else "No previous conversation"}
@@ -110,7 +127,6 @@ CURRENT AGENT INPUT:
     )
 
     final_response = ""
-
     generated_agent = "Coordination Agent"
     generated_agent_id = coordination_agent.id
 
@@ -162,10 +178,6 @@ CURRENT AGENT INPUT:
         )
 
         for event in stream:
-
-            # ==================================================
-            # TOKEN USAGE
-            # ==================================================
 
             if event.type == "span.model_request_end":
 
@@ -261,10 +273,6 @@ CURRENT AGENT INPUT:
                         model_used=MODEL_USED
                     )
 
-            # ==================================================
-            # AGENT THREAD CREATED
-            # ==================================================
-
             elif event.type == "session.thread_created":
 
                 agent_name = getattr(
@@ -279,7 +287,6 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
-
                         participating_agents.append(
                             agent_name
                         )
@@ -313,10 +320,6 @@ CURRENT AGENT INPUT:
                         token_consumed=None,
                         model_used=MODEL_USED
                     )
-
-            # ==================================================
-            # FINANCE AGENT CUSTOM TOOL
-            # ==================================================
 
             elif event.type == "agent.custom_tool_use":
 
@@ -456,10 +459,6 @@ CURRENT AGENT INPUT:
                         ]
                     )
 
-            # ==================================================
-            # SUB-AGENT RESPONSE
-            # ==================================================
-
             elif event.type == "agent.thread_message_received":
 
                 agent_name = getattr(
@@ -474,7 +473,6 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
-
                         participating_agents.append(
                             agent_name
                         )
@@ -508,10 +506,6 @@ CURRENT AGENT INPUT:
                         token_consumed=current_token_consumed,
                         model_used=MODEL_USED
                     )
-
-            # ==================================================
-            # AGENT MESSAGE
-            # ==================================================
 
             elif event.type == "agent.message":
 
@@ -561,11 +555,6 @@ CURRENT AGENT INPUT:
                         token_consumed=current_token_consumed,
                         model_used=MODEL_USED
                     )
-
-            # ==================================================
-            # SESSION COMPLETED
-            # ==================================================
-
             elif event.type == "session.status_idle":
 
                 stop_reason = getattr(
@@ -608,11 +597,6 @@ CURRENT AGENT INPUT:
                         )
 
                         break
-
-    # ==================================================
-    # FALLBACK RESPONSE
-    # ==================================================
-
     if not final_response:
 
         final_response = (
@@ -669,10 +653,6 @@ CURRENT AGENT INPUT:
         model_used=MODEL_USED
     )
 
-    # ==================================================
-    # SAVE CONVERSATION HISTORY
-    # ==================================================
-
     conversation_history.setdefault(
         conversation_id,
         []
@@ -696,10 +676,6 @@ CURRENT AGENT INPUT:
         "Conversation history updated:",
         conversation_id
     )
-
-    # ==================================================
-    # LOG COMPLETE CHAT
-    # ==================================================
 
     await log_chat(
         user_name=user_name,
