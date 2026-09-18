@@ -152,114 +152,80 @@ inventory_transaction: transaction_id
 reconciliation: reconciliation_id
 """
 
-FINANCE_FIELDS_PROMPT = """
-Confirmed live database fields.
+FINANCE_FIELDS_PROMPT = FINANCE_FIELDS_PROMPT = """
+AUTHORITATIVE LIVE DATABASE SCHEMA
 
-IMPORTANT:
-The fields below are the fields confirmed for the current live
-CFO Analysis Industry Database.
+Use ONLY the following tables and columns.
+Do NOT invent, guess, or discover additional columns.
 
-Do not use fields that are not listed here.
+bill_of_material:
+bom_id, finished_product_id, raw_material_id, quantity_per_unit, unit_of_measure
 
-purchase_order:
+cost_centre:
+cost_centre_id, cost_centre_name, department_function, status
 
-po_id
-vendor_id
-po_date
-currency
-tax_rate
-payment_terms
-expected_delivery_date
-cost_centre_id
-plant_id
-warehouse_id
-po_status
+cost_centre_allocation:
+allocation_id, grn_line_id, cost_centre_id, allocated_quantity, allocation_reason
 
-purchase_order_line:
+customer:
+customer_id, customer_name, customer_type, industry, location, payment_terms, currency, credit_limit, customer_status
 
-po_line_id
-po_id
-product_id
-ordered_quantity
-unit_price
+customer_order:
+sales_order_id, customer_id, order_date, product_id, ordered_quantity, required_delivery_date, unit_price, order_status
 
 goods_receipt_note:
-
-grn_id
-po_id
-vendor_id
-warehouse_id
-status
+grn_id, po_id, vendor_id, delivery_date, warehouse_id
 
 goods_receipt_note_line:
+grn_line_id, grn_id, po_line_id, product_id, delivered_quantity, damaged_quantity, rejected_quantity, accepted_quantity, cumulative_accepted_quantity, remaining_po_quantity, batch_lot_number
 
-grn_line_id
-grn_id
-po_line_id
-product_id
-received_quantity
-accepted_quantity
-rejected_quantity
-damaged_quantity
+inventory_transaction:
+transaction_id, product_id, warehouse_id, transaction_type, transaction_date, opening_quantity, receipt_quantity, consumption_quantity, transfer_quantity, adjustment_quantity, closing_quantity
+
+line_of_business:
+lob_id, lob_name, description, status
+
+material_consumption:
+consumption_id, production_order_id, finished_product_id, raw_material_id, cost_centre_id, expected_quantity, actual_quantity, variance_quantity, variance_percent
+
+plant:
+plant_id, plant_name, location, status
+
+product:
+product_id, product_name, product_type, product_category, diameter, length, pressure_class, grade, unit_of_measure, lob_id, standard_cost, active_status
+
+product_cost:
+product_cost_id, finished_product_id, standard_cost, material_cost, direct_labour_cost, machine_cost, utilities_cost, quality_cost, packaging_cost, manufacturing_overhead_cost, actual_product_cost, cost_variance, cost_variance_percent
+
+production_order:
+production_order_id, finished_product_id, production_quantity, plant_id, production_cost_centre_id, planned_start_date, planned_end_date, actual_start_date, actual_end_date, production_status
+
+purchase_order:
+po_id, vendor_id, po_date, currency, tax_rate, payment_terms, expected_delivery_date, cost_centre_id, plant_id, warehouse_id, po_status
+
+purchase_order_line:
+po_line_id, po_id, product_id, ordered_quantity, unit_price
+
+reconciliation:
+reconciliation_id, po_id, grn_id, invoice_id, vendor_match, product_match, po_quantity, grn_accepted_quantity, invoice_quantity, unit_price_match, tax_match, invoice_amount, reconciliation_status
 
 supplier_invoice:
-
-invoice_id
-po_id
-grn_id
-vendor_id
-product_id
-invoice_amount
-status
+invoice_id, grn_id, po_id, vendor_id, invoice_date, invoice_number, invoice_quantity, tax, freight_amount, discount_amount, invoice_amount, payment_due_date, payment_terms
 
 supplier_invoice_line:
+invoice_line_id, invoice_id, grn_line_id, po_line_id, product_id, invoice_quantity, unit_price, line_amount
 
-invoice_line_id
-invoice_id
-po_line_id
-grn_line_id
-product_id
-hsn_sac_code
-description
-uom_id
-invoiced_quantity
-unit_price
-discount_amount
-taxable_amount
-tax_percent
-tax_amount
-gl_account_id
-matched_quantity
-variance_quantity
-variance_amount
-matching_status
+vendor:
+vendor_id, vendor_name, material_category, payment_terms, currency, gst_tax_category, vendor_status
 
-IMPORTANT COLUMN RESTRICTIONS:
+warehouse:
+warehouse_id, warehouse_name, location, status
 
-Do NOT use the following unconfirmed purchase_order columns:
-
-po_number
-company_id
-subtotal
-discount_amount
-cgst_amount
-sgst_amount
-igst_amount
-freight_amount
-total_amount
-status
-
-Do NOT use grn_date unless it is explicitly confirmed.
-
-Do NOT use line_total in supplier_invoice_line.
-
-invoice_amount is stored directly in supplier_invoice.
-
-For purchase order monetary calculations, use
-purchase_order_line.ordered_quantity and
-purchase_order_line.unit_price.
-
-Never invent or assume additional columns.
+STRICT:
+- Never use unlisted columns.
+- Never query information_schema.
+- Never use SELECT * for schema discovery.
+- Never perform trial-and-error SQL.
 """
 
 FINANCE_IDENTIFIER_TYPES_PROMPT = """

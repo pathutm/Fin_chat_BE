@@ -73,11 +73,26 @@ GENERAL AGENT:
 {GENERAL_AGENT_PROMPT}
 
 COORDINATION RULES:
+
 Currency Conversion:
 {coordination_process["currency_reason"]}
 
+Target Currency:
+{coordination_process["target_currency"]}
+
 Output Formatting:
 {coordination_process["output_format"]}
+
+IMPORTANT CURRENCY REQUIREMENT:
+If currency_conversion_required is True, every monetary
+value in the final response MUST be displayed in USD.
+
+Use the "$" symbol for USD monetary values.
+
+Do not display "₹" or INR in the final response when
+currency conversion is required.
+
+Always format USD monetary values with two decimal places.
 
 Final Response:
 {coordination_process["response_rule"]}
@@ -530,6 +545,10 @@ CURRENT AGENT INPUT:
                     )
 
                     final_response = response_text
+                    coordination_process = coordination_rule(
+                        question,
+                        result=final_response
+                    )
 
                     print(
                         "\nAgent response:"
