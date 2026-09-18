@@ -1,4 +1,4 @@
-import httpx2
+import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from core.config import SUPABASE_PROJECT_REF, SUPABASE_ACCESS_TOKEN
@@ -28,7 +28,7 @@ async def fetch_finance_data(query: str):
 
     print("MCP → execute_sql")
 
-    async with httpx2.AsyncClient(headers=HEADERS) as http_client:
+    async with httpx.AsyncClient(headers=HEADERS) as http_client:
         async with streamable_http_client(
             SUPABASE_MCP_URL,
             http_client=http_client

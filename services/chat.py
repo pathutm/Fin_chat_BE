@@ -553,7 +553,7 @@ CURRENT AGENT INPUT:
                         model_used=MODEL_USED
                     )
 
-            elif event_type == "agent.message":
+            elif event.type == "agent.message":
 
                 text_parts = []
 
@@ -616,7 +616,7 @@ CURRENT AGENT INPUT:
                         model_used=MODEL_USED
                     )
 
-            elif event_type == "session.status_idle":
+            elif event.type == "session.status_idle":
 
                 stop_reason = getattr(
                     event,

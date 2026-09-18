@@ -1,3 +1,28 @@
-﻿.env
+# Environments and Virtualenv
+.env
+.env.local
+.env.*.local
+!.env.example
+venv/
+.venv/
+env/
+ENV/
+
+# Python bytecode and caches
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Operating System & IDEs
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
