@@ -1,8 +1,9 @@
 models:
   - type: main
-    engine: groq
-    model: openai/gpt-oss-20b
-    api_key_env_var: GROQ_API_KEY
+    engine: nvidia
+    model: nvidia/nemotron-3.5-content-safety
+    api_key_env_var: NVIDIA_API_KEY
+    endpoint: https://integrate.api.nvidia.com/v1/chat/completions
 
 rails:
   input:
