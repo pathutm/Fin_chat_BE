@@ -135,6 +135,19 @@ async def chat_endpoint(request: ChatRequest):
         model_used=GUARDRAIL_MODEL
     )
 
+    # -----------------------------------------------------------------------
+    # Step 3: Output Guardrail (Sanitize/redact sensitive disclosures)
+    # -----------------------------------------------------------------------
+    final_safe_response = await check_output_guardrail(raw_response)
+
+    # Sync memory if sanitized so future conversation turns do not leak secrets
+    if final_safe_response != raw_response and request.conversation_id in conversation_history:
+        if conversation_history[request.conversation_id]:
+            conversation_history[request.conversation_id][-1]["content"] = final_safe_response
+
+    # -----------------------------------------------------------------------
+    # Step 4: Return safe response to Angular
+    # -----------------------------------------------------------------------
     return ChatResponse(
         response=final_safe_response,
         agent=generated_agent

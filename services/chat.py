@@ -1,4 +1,5 @@
 from core.config import ANTHROPIC_ENVIRONMENT_ID
+
 from agents.client import client
 from agents.setup import (
     coordination_agent,
@@ -41,13 +42,14 @@ async def handle_chat_logic(
     else:
         agent_question = question
 
+    # Apply Coordination Agent rules
     coordination_process = coordination_rule(question)
-
-    print("\nCoordination Rule")
+    print("\n========== COORDINATION RULE ==========")
     print("Question:", question)
     print("Money Related:", coordination_process["currency_conversion_required"])
     print("Target Currency:", coordination_process["target_currency"])
     print("Currency Reason:", coordination_process["currency_reason"])
+    print("=======================================\n")
 
     context_window = f"""
 SECURITY PROMPT:
@@ -121,7 +123,30 @@ CURRENT AGENT INPUT:
         environment_id=ANTHROPIC_ENVIRONMENT_ID
     )
 
-    print("Session created:", session.id)
+    print(
+        "Session created:",
+        session.id
+    )
+
+    await create_process_log(
+        user_name=user_name,
+        user_id=user_id,
+        session_id=session.id,
+        conversation_id=conversation_id,
+        agent_id=coordination_agent.id,
+        agent_name="Coordination Agent",
+        env_id=ANTHROPIC_ENVIRONMENT_ID,
+        tool_id=None,
+        tool_req=None,
+        tool_response=None,
+        process_initiation="User",
+        process_destination="Coordination Agent",
+        input_data=question,
+        output_data="Coordination Agent started",
+        context_window=context_window,
+        token_consumed=None,
+        model_used=MODEL_USED
+    )
 
     final_response = ""
     generated_agent = "Coordination Agent"
@@ -140,7 +165,12 @@ CURRENT AGENT INPUT:
         )
     }
 
-    with client.beta.sessions.events.stream(session.id) as stream:
+    # Latest token usage for the current process
+    current_token_consumed = None
+
+    with client.beta.sessions.events.stream(
+        session.id
+    ) as stream:
 
         client.beta.sessions.events.send(
             session.id,
@@ -157,11 +187,28 @@ CURRENT AGENT INPUT:
             ]
         )
 
+        await create_process_log(
+            user_name=user_name,
+            user_id=user_id,
+            session_id=session.id,
+            conversation_id=conversation_id,
+            agent_id=coordination_agent.id,
+            agent_name="Coordination Agent",
+            env_id=ANTHROPIC_ENVIRONMENT_ID,
+            tool_id=None,
+            tool_req=None,
+            tool_response=None,
+            process_initiation="User",
+            process_destination="Coordination Agent",
+            input_data=agent_question,
+            output_data="User message sent to Coordination Agent",
+            token_consumed=None,
+            model_used=MODEL_USED
+        )
+
         for event in stream:
 
-            event_type = event.type
-
-            if event_type == "span.model_request_end":
+            if event.type == "span.model_request_end":
 
                 model_usage = getattr(
                     event,
@@ -183,27 +230,79 @@ CURRENT AGENT INPUT:
                         0
                     ) or 0
 
-                    thread_id = getattr(
-                        event,
-                        "session_thread_id",
-                        None
+                    cache_read_tokens = getattr(
+                        model_usage,
+                        "cache_read_input_tokens",
+                        0
+                    ) or 0
+
+                    cache_creation_tokens = getattr(
+                        model_usage,
+                        "cache_creation_input_tokens",
+                        0
+                    ) or 0
+
+                    current_token_consumed = (
+                        input_tokens
+                        + output_tokens
+                        + cache_read_tokens
+                        + cache_creation_tokens
                     )
 
-                    if not thread_id:
-                        thread_id = session.id
+                    print(
+                        "\nToken Usage:"
+                    )
 
-                    pending_model_usage[thread_id] = {
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens
-                    }
+                    print(
+                        "Input Tokens:",
+                        input_tokens
+                    )
 
-                    print("\nModel Token Usage")
-                    print("Thread:", thread_id)
-                    print("Input Tokens:", input_tokens)
-                    print("Output Tokens:", output_tokens)
-                    print("Model:", MODEL_USED)
+                    print(
+                        "Output Tokens:",
+                        output_tokens
+                    )
 
-            elif event_type == "session.thread_created":
+                    print(
+                        "Cache Read Tokens:",
+                        cache_read_tokens
+                    )
+
+                    print(
+                        "Cache Creation Tokens:",
+                        cache_creation_tokens
+                    )
+
+                    print(
+                        "Total Tokens:",
+                        current_token_consumed
+                    )
+
+                    print(
+                        "Model:",
+                        MODEL_USED
+                    )
+
+                    await create_process_log(
+                        user_name=user_name,
+                        user_id=user_id,
+                        session_id=session.id,
+                        conversation_id=conversation_id,
+                        agent_id=generated_agent_id,
+                        agent_name=generated_agent,
+                        env_id=ANTHROPIC_ENVIRONMENT_ID,
+                        tool_id=tool_id,
+                        tool_req=tool_request,
+                        tool_response=tool_response,
+                        process_initiation="Model",
+                        process_destination=generated_agent,
+                        input_data=question,
+                        output_data="Model request completed",
+                        token_consumed=current_token_consumed,
+                        model_used=MODEL_USED
+                    )
+
+            elif event.type == "session.thread_created":
 
                 agent_name = getattr(
                     event,
@@ -225,27 +324,37 @@ CURRENT AGENT INPUT:
                     if agent_name not in participating_agents:
                         participating_agents.append(agent_name)
 
+                    print(
+                        "Coordination Agent →",
+                        agent_name
+                    )
+
                     agent_object = (
                         finance_agent
                         if agent_name == "Finance Agent"
                         else general_agent
                     )
 
-                    if thread_id:
-                        thread_agents[thread_id] = (
-                            agent_name,
-                            agent_object.id
-                        )
-
-                    generated_agent = agent_name
-                    generated_agent_id = agent_object.id
-
-                    print(
-                        "Coordination Agent →",
-                        agent_name
+                    await create_process_log(
+                        user_name=user_name,
+                        user_id=user_id,
+                        session_id=session.id,
+                        conversation_id=conversation_id,
+                        agent_id=agent_object.id,
+                        agent_name=agent_name,
+                        env_id=ANTHROPIC_ENVIRONMENT_ID,
+                        tool_id=None,
+                        tool_req=None,
+                        tool_response=None,
+                        process_initiation="Coordination Agent",
+                        process_destination=agent_name,
+                        input_data=question,
+                        output_data="Request routed to agent",
+                        token_consumed=None,
+                        model_used=MODEL_USED
                     )
 
-            elif event_type == "agent.custom_tool_use":
+            elif event.type == "agent.custom_tool_use":
 
                 query = event.input.get(
                     "query",
@@ -260,11 +369,36 @@ CURRENT AGENT INPUT:
 
                 print("\nFinance Agent → get_finance_data")
                 print("SQL Query:")
+                print(
+                    "SQL Query:"
+                )
+
                 print(query)
+
+                await create_process_log(
+                    user_name=user_name,
+                    user_id=user_id,
+                    session_id=session.id,
+                    conversation_id=conversation_id,
+                    agent_id=finance_agent.id,
+                    agent_name="Finance Agent",
+                    env_id=ANTHROPIC_ENVIRONMENT_ID,
+                    tool_id=tool_id,
+                    tool_req=query,
+                    tool_response=None,
+                    process_initiation="Finance Agent",
+                    process_destination="get_finance_data",
+                    input_data=query,
+                    output_data="Tool request generated",
+                    token_consumed=None,
+                    model_used=MODEL_USED
+                )
 
                 try:
 
-                    result = await fetch_finance_data(query)
+                    result = await fetch_finance_data(
+                        query
+                    )
 
                     tool_result = extract_tool_result(result)
 
@@ -331,10 +465,11 @@ CURRENT AGENT INPUT:
                         child_agent="get_finance_data",
                         input_data=query,
                         output_data=tool_response,
+                        token_consumed=None,
+                        model_used=MODEL_USED,
                         context_window=None,
                         input_tokens=None,
-                        output_tokens=None,
-                        model_used=None
+                        output_tokens=None
                     )
 
                     client.beta.sessions.events.send(
@@ -353,7 +488,7 @@ CURRENT AGENT INPUT:
                         ]
                     )
 
-            elif event_type == "agent.thread_message_received":
+            elif event.type == "agent.thread_message_received":
 
                 agent_name = getattr(
                     event,
@@ -439,6 +574,10 @@ CURRENT AGENT INPUT:
                     response_text = "".join(text_parts)
 
                     final_response = response_text
+                    coordination_process = coordination_rule(
+                        question,
+                        result=final_response
+                    )
 
                     print("\nAgent response:")
                     print(response_text)
@@ -496,11 +635,60 @@ CURRENT AGENT INPUT:
                     if reason_type == "end_turn":
                         print("\nRequest completed")
                         break
-
     if not final_response:
         final_response = (
             "Sorry, I could not generate a response."
         )
+
+        await create_process_log(
+            user_name=user_name,
+            user_id=user_id,
+            session_id=session.id,
+            conversation_id=conversation_id,
+            agent_id=coordination_agent.id,
+            agent_name="Coordination Agent",
+            env_id=ANTHROPIC_ENVIRONMENT_ID,
+            tool_id=tool_id,
+            tool_req=tool_request,
+            tool_response=tool_response,
+            process_initiation="Coordination Agent",
+            process_destination="User",
+            input_data=question,
+            output_data=final_response,
+            token_consumed=current_token_consumed,
+            model_used=MODEL_USED
+        )
+
+    if participating_agents:
+
+        print(
+            "Agents participated:",
+            ", ".join(participating_agents)
+        )
+
+    print(
+        "Final response generated by:",
+        generated_agent
+    )
+
+    await create_process_log(
+        user_name=user_name,
+        user_id=user_id,
+        session_id=session.id,
+        conversation_id=conversation_id,
+        agent_id=generated_agent_id,
+        agent_name=generated_agent,
+        env_id=ANTHROPIC_ENVIRONMENT_ID,
+        tool_id=tool_id,
+        tool_req=tool_request,
+        tool_response=tool_response,
+        process_initiation="Coordination Agent",
+        process_destination="User",
+        input_data=question,
+        output_data=final_response,
+        token_consumed=current_token_consumed,
+        model_used=MODEL_USED
+    )
 
     conversation_history.setdefault(
         conversation_id,

@@ -33,7 +33,7 @@ async def log_chat(
     user_id: str | None = None
 ):
     log_data = {
-        "User_ID": user_id,
+        "User_ID":user_id,
         "User_Name": user_name,
         "Session_Id": session_id,
         "Conversation_Id": conversation_id,
@@ -46,6 +46,9 @@ async def log_chat(
         "Tool_Id": tool_id,
         "Assistant_Msg": assistant_msg
     }
+
+    if user_id is not None:
+        log_data["User_ID"] = user_id
 
     try:
         result = (
@@ -67,29 +70,48 @@ async def log_chat(
             return result
         raise e
 
+
+def _clean_uuid(val: str | None) -> str | None:
+    if not val:
+        return None
+    import uuid
+    try:
+        uuid.UUID(str(val))
+        return str(val)
+    except (ValueError, AttributeError):
+        return None
+
+
 async def create_process_log(
-    user_name: str | None,
-    user_id: str | None,
-    session_id: str,
-    conversation_id: str | None,
-    agent_id: str | None,
-    agent_name: str | None,
-    env_id: str | None,
-    tool_id: str | None,
-    tool_req: str | None,
-    tool_response: str | None,
-    parent_agent: str | None,
-    child_agent: str | None,
-    input_data: str | None,
-    output_data: str | None,
+    user_name: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    conversation_id: str | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+    env_id: str | None = None,
+    tool_id: str | None = None,
+    tool_req: str | None = None,
+    tool_response: str | None = None,
+    parent_agent: str | None = None,
+    child_agent: str | None = None,
+    process_initiation: str | None = None,
+    process_destination: str | None = None,
+    input_data: str | None = None,
+    output_data: str | None = None,
     context_window: str | None = None,
+    token_consumed: int | None = None,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
-    model_used: str | None = None
+    model_used: str | None = None,
+    **kwargs
 ):
+    clean_user_id = _clean_uuid(user_id)
+    p_init = parent_agent or process_initiation
+    p_dest = child_agent or process_destination
     process_data = {
         "User_Name": user_name,
-        "User_ID": user_id,
+        "User_ID": clean_user_id,
         "Session_Id": session_id,
         "Conversation_Id": conversation_id,
         "Agent_Id": agent_id,
@@ -98,21 +120,19 @@ async def create_process_log(
         "Tool_Id": tool_id,
         "Tool_Req": tool_req,
         "Tool_Response": tool_response,
-        "Parent_Agent": parent_agent,
-        "Child_Agent": child_agent,
+        "Parent_Agent": p_init,
+        "Child_Agent": p_dest,
         "Input": input_data,
         "Output": output_data,
         "Context_Window": context_window,
-        "Model_Used": model_used,
-        "Input_Tokens": input_tokens,
-        "Output_Tokens": output_tokens
+        "Model_Used": model_used
     }
 
-    response = (
-        supabase
-        .table("finance_ai_process_logs")
-        .insert(process_data)
-        .execute()
-    )
-
-    return response
+    try:
+        response = supabase.table(
+            "finance_ai_process_logs"
+        ).insert(process_data).execute()
+        return response
+    except Exception as e:
+        print(f"[Logging] create_process_log warning: {e}")
+        return None
