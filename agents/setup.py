@@ -503,26 +503,42 @@ Your job is:
 Understand → Delegate → Collect → Merge → Respond.
 """
 
-general_agent = client.beta.agents.create(
-    name="General Agent",
-    model=MODEL,
-    system=SECURITY_PROMPT + GENERAL_AGENT_PROMPT
-)
+# ── Lazy agent initialisation ──────────────────────────────────────────────
+# Agents are created on first use, NOT at import time, so the server can
+# boot even when the Anthropic API is temporarily unavailable or over quota.
 
-finance_agent = client.beta.agents.create(
-    name="Finance Agent",
-    model=MODEL,
-    system=(
-        SECURITY_PROMPT
-        + FINANCE_AGENT_PROMPT
-        + "\n"
-        + FINANCE_SKILLS
-    ),
-    tools=[
-        {
-            "type": "custom",
-            "name": "get_finance_data",
-            "description": """
+_general_agent = None
+_finance_agent = None
+_coordination_agent = None
+
+
+def _init_agents():
+    """Create the three Anthropic agents (idempotent – only runs once)."""
+    global _general_agent, _finance_agent, _coordination_agent
+
+    if _coordination_agent is not None:
+        return  # Already initialised
+
+    _general_agent = client.beta.agents.create(
+        name="General Agent",
+        model=MODEL,
+        system=SECURITY_PROMPT + GENERAL_AGENT_PROMPT
+    )
+
+    _finance_agent = client.beta.agents.create(
+        name="Finance Agent",
+        model=MODEL,
+        system=(
+            SECURITY_PROMPT
+            + FINANCE_AGENT_PROMPT
+            + "\n"
+            + FINANCE_SKILLS
+        ),
+        tools=[
+            {
+                "type": "custom",
+                "name": "get_finance_data",
+                "description": """
 Retrieve finance and CFO database information using a
 read-only SQL query.
 
@@ -532,45 +548,67 @@ Do not perform schema discovery.
 Do not query information_schema.
 Do not perform write or destructive SQL operations.
 """,
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": """
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": """
 Read-only SQL query for the authorized CFO Analysis
 Industry Database.
 
 Use only actual tables and confirmed columns.
 """
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    ]
-)
-
-coordination_agent = client.beta.agents.create(
-    name="Coordination Agent",
-    model=MODEL,
-    system=SECURITY_PROMPT + COORDINATION_AGENT_PROMPT,
-    multiagent={
-        "type": "coordinator",
-        "agents": [
-            {
-                "type": "agent",
-                "id": general_agent.id,
-                "version": general_agent.version
-            },
-            {
-                "type": "agent",
-                "id": finance_agent.id,
-                "version": finance_agent.version
+                        }
+                    },
+                    "required": ["query"]
+                }
             }
         ]
-    }
-)
+    )
+
+    _coordination_agent = client.beta.agents.create(
+        name="Coordination Agent",
+        model=MODEL,
+        system=SECURITY_PROMPT + COORDINATION_AGENT_PROMPT,
+        multiagent={
+            "type": "coordinator",
+            "agents": [
+                {
+                    "type": "agent",
+                    "id": _general_agent.id,
+                    "version": _general_agent.version
+                },
+                {
+                    "type": "agent",
+                    "id": _finance_agent.id,
+                    "version": _finance_agent.version
+                }
+            ]
+        }
+    )
+
+
+def get_agents():
+    """Return (general_agent, finance_agent, coordination_agent), initialising on first call."""
+    _init_agents()
+    return _general_agent, _finance_agent, _coordination_agent
+
+
+# Legacy convenience references – resolved lazily on first access
+class _AgentProxy:
+    """Proxy that resolves to the real agent object on first attribute access."""
+    def __init__(self, index):
+        self._index = index
+
+    def __getattr__(self, name):
+        agents = get_agents()
+        return getattr(agents[self._index], name)
+
+
+general_agent = _AgentProxy(0)
+finance_agent = _AgentProxy(1)
+coordination_agent = _AgentProxy(2)
 
 
 def get_context_window(
