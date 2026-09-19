@@ -8,10 +8,11 @@ def coordination_rule(
     Rules:
     1. Currency Conversion
     2. Output Formatting
-    3. Concise Final Response
+    3. Graph / Chart Handling
+    4. Clarification Control
+    5. Concise Final Response
     """
 
-    # Convert the user's question to lowercase
     question_lower = question.lower()
 
     money_keywords = [
@@ -50,22 +51,71 @@ def coordination_rule(
         currency_reason = (
             "Monetary values must be presented in USD."
         )
+        output_format = (
+            "Present monetary values in USD with two decimal places."
+        )
     else:
         currency_conversion_required = False
         target_currency = None
         currency_reason = (
             "No monetary value is involved."
         )
-
-    if money_related:
-        output_format = (
-            "Present monetary values in USD with two decimal places."
-        )
-    else:
         output_format = (
             "Format the response clearly according to "
             "the information requested."
         )
+
+    graph_keywords = [
+        "graph",
+        "chart",
+        "graphical",
+        "visualize",
+        "visualization",
+        "plot"
+    ]
+
+    graph_requested = any(
+        keyword in question_lower
+        for keyword in graph_keywords
+    )
+
+    if graph_requested:
+        graph_rule = (
+            "The user EXPLICITLY requested a graph or chart. "
+            "DO NOT ask if they want a graph. "
+            "Return BOTH the textual finance answer AND "
+            "format the database numbers in a clean Markdown "
+            "table or list so the frontend chart component "
+            "can render the graph automatically. "
+            "Use REAL database values."
+        )
+    else:
+        graph_rule = (
+            "The user did NOT explicitly request a graph. "
+            "If a graph could reasonably represent the result, "
+            "you may ask ONCE at the end of the response: "
+            "'Would you like me to generate a graphical "
+            "representation of this result? (Yes/No)'. "
+            "If a clarification question is also required, "
+            "combine the graph question into the single "
+            "clarification question."
+        )
+
+    clarification_rule = (
+        "STRICT CLARIFICATION CONTROL: Maximum 1 clarification "
+        "question normally, maximum 2 in absolute worst case. "
+        "NEVER ask 3 or more clarification questions. "
+        "DO NOT ask clarification for specific identifiers "
+        "(e.g. 'invoice 000025', 'PO-000001', "
+        "'PROD-000025', 'working capital'). "
+        "Always query the database and check context first. "
+        "If multiple pieces of information are genuinely "
+        "missing, COMBINE them into ONE single consolidated "
+        "question. "
+        "If user says 'don't ask any more questions' or "
+        "provides an answer, DO NOT ask another question; "
+        "proceed with the best available information."
+    )
 
     response_rule = (
         "Return a direct and professional answer that addresses "
@@ -86,5 +136,14 @@ def coordination_rule(
             output_format,
 
         "response_rule":
-            response_rule
+            response_rule,
+
+        "graph_requested":
+            graph_requested,
+
+        "graph_rule":
+            graph_rule,
+
+        "clarification_rule":
+            clarification_rule
     }

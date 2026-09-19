@@ -1,6 +1,7 @@
 from core.config import ANTHROPIC_ENVIRONMENT_ID
 
 from agents.client import client
+
 from agents.setup import (
     coordination_agent,
     finance_agent,
@@ -10,21 +11,33 @@ from agents.setup import (
     FINANCE_AGENT_PROMPT,
     COORDINATION_AGENT_PROMPT
 )
+
 from services.memory import (
     get_conversation_context,
     conversation_history
 )
+
 from services.db import (
     fetch_finance_data,
     extract_tool_result
 )
+
 from services.logging import (
     log_chat,
     create_process_log
 )
+
 from agents.coordination_rules import coordination_rule
 
+from core.telemetry import (
+    tracer,
+    input_token_counter,
+    output_token_counter
+)
+
+
 MODEL_USED = "claude-haiku-4-5-20251001"
+
 
 async def handle_chat_logic(
     question: str,
@@ -32,7 +45,10 @@ async def handle_chat_logic(
     user_name: str | None = None,
     user_id: str | None = None
 ):
-    previous_context = get_conversation_context(conversation_id)
+
+    previous_context = get_conversation_context(
+        conversation_id
+    )
 
     if previous_context:
         agent_question = (
@@ -42,37 +58,59 @@ async def handle_chat_logic(
     else:
         agent_question = question
 
-    # Apply Coordination Agent rules
-    coordination_process = coordination_rule(question)
-    print("\n========== COORDINATION RULE ==========")
-    print("Question:", question)
-    print("Money Related:", coordination_process["currency_conversion_required"])
-    print("Target Currency:", coordination_process["target_currency"])
-    print("Currency Reason:", coordination_process["currency_reason"])
-    print("=======================================\n")
+    coordination_process = coordination_rule(
+        question
+    )
+
+    print("\nCoordination Rule")
+    print(
+        "Money Related:",
+        coordination_process[
+            "currency_conversion_required"
+        ]
+    )
+    print(
+        "Target Currency:",
+        coordination_process[
+            "target_currency"
+        ]
+    )
+    print(
+        "Currency Reason:",
+        coordination_process[
+            "currency_reason"
+        ]
+    )
 
     context_window = f"""
 SECURITY PROMPT:
+
 {SECURITY_PROMPT}
 
 COORDINATION AGENT:
+
 {COORDINATION_AGENT_PROMPT}
 
 FINANCE AGENT:
+
 {FINANCE_AGENT_PROMPT}
 
 GENERAL AGENT:
+
 {GENERAL_AGENT_PROMPT}
 
 COORDINATION RULES:
 
 Currency Conversion:
+
 {coordination_process["currency_reason"]}
 
 Target Currency:
+
 {coordination_process["target_currency"]}
 
 Output Formatting:
+
 {coordination_process["output_format"]}
 
 STRICT CURRENCY REQUIREMENT:
@@ -86,11 +124,8 @@ If currency_conversion_required is True:
 - Do NOT display "INR" in the final response.
 - Do NOT simply replace "₹" or "INR" with "$".
 - The monetary value must represent the converted USD amount.
-- Every monetary value in the response must follow the USD requirement.
-- Always format USD monetary values with exactly two decimal places.
-- Do not leave any monetary value in INR when USD conversion is required.
+- Format USD monetary values with exactly two decimal places.
 - Do not provide mixed INR and USD monetary values.
-- Apply this requirement to invoice amounts, purchase order amounts, prices, costs, revenue, expenses, profit, tax, freight, discounts, payments, and all other monetary values.
 
 If currency_conversion_required is False:
 
@@ -99,18 +134,23 @@ If currency_conversion_required is False:
 
 FINAL RESPONSE REQUIREMENT:
 
-Before returning the final response, verify that every monetary value follows the currency conversion requirement.
+Before returning the final response, verify that every monetary value follows
+the currency conversion requirement.
 
 Final Response:
+
 {coordination_process["response_rule"]}
 
 PREVIOUS CONVERSATION:
+
 {previous_context if previous_context else "No previous conversation"}
 
 CURRENT USER QUESTION:
+
 {question}
 
 CURRENT AGENT INPUT:
+
 {agent_question}
 """
 
@@ -123,50 +163,44 @@ CURRENT AGENT INPUT:
         environment_id=ANTHROPIC_ENVIRONMENT_ID
     )
 
-    print(
-        "Session created:",
-        session.id
-    )
-
-    await create_process_log(
-        user_name=user_name,
-        user_id=user_id,
-        session_id=session.id,
-        conversation_id=conversation_id,
-        agent_id=coordination_agent.id,
-        agent_name="Coordination Agent",
-        env_id=ANTHROPIC_ENVIRONMENT_ID,
-        tool_id=None,
-        tool_req=None,
-        tool_response=None,
-        process_initiation="User",
-        process_destination="Coordination Agent",
-        input_data=question,
-        output_data="Coordination Agent started",
-        context_window=context_window,
-        token_consumed=None,
-        model_used=MODEL_USED
-    )
+    print("Session created:", session.id)
 
     final_response = ""
+
     generated_agent = "Coordination Agent"
     generated_agent_id = coordination_agent.id
+
     participating_agents = []
+
     tool_request = None
     tool_response = None
     tool_id = None
 
     pending_model_usage = {}
 
-    thread_agents = {
-        session.id: (
-            "Coordination Agent",
-            coordination_agent.id
-        )
-    }
+    coordination_span = tracer.start_span(
+        "chat.coordination_agent"
+    )
 
-    # Latest token usage for the current process
-    current_token_consumed = None
+    coordination_span.set_attribute(
+        "agent.name",
+        "Coordination Agent"
+    )
+
+    coordination_span.set_attribute(
+        "model.name",
+        MODEL_USED
+    )
+
+    coordination_span.set_attribute(
+        "conversation.id",
+        conversation_id
+    )
+
+    finance_span = None
+    finance_span_thread_id = None
+
+    tool_span = None
 
     with client.beta.sessions.events.stream(
         session.id
@@ -198,11 +232,13 @@ CURRENT AGENT INPUT:
             tool_id=None,
             tool_req=None,
             tool_response=None,
-            process_initiation="User",
-            process_destination="Coordination Agent",
+            parent_agent="User",
+            child_agent="Coordination Agent",
             input_data=agent_question,
             output_data="User message sent to Coordination Agent",
-            token_consumed=None,
+            context_window=context_window,
+            input_tokens=None,
+            output_tokens=None,
             model_used=MODEL_USED
         )
 
@@ -242,45 +278,97 @@ CURRENT AGENT INPUT:
                         0
                     ) or 0
 
-                    current_token_consumed = (
-                        input_tokens
-                        + output_tokens
-                        + cache_read_tokens
-                        + cache_creation_tokens
+                    thread_id = getattr(
+                        event,
+                        "session_thread_id",
+                        None
                     )
 
-                    print(
-                        "\nToken Usage:"
+                    usage_data = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens,
+                        "cache_read_tokens": cache_read_tokens,
+                        "cache_creation_tokens": cache_creation_tokens
+                    }
+
+                    pending_model_usage[
+                        thread_id or session.id
+                    ] = usage_data
+
+                    input_token_counter.add(
+                        input_tokens,
+                        {
+                            "model": MODEL_USED
+                        }
                     )
 
+                    output_token_counter.add(
+                        output_tokens,
+                        {
+                            "model": MODEL_USED
+                        }
+                    )
+
+                    if (
+                        coordination_span
+                        and (
+                            not thread_id
+                            or thread_id == session.id
+                        )
+                    ):
+                        coordination_span.set_attribute(
+                            "input.tokens",
+                            input_tokens
+                        )
+
+                        coordination_span.set_attribute(
+                            "output.tokens",
+                            output_tokens
+                        )
+
+                        coordination_span.set_attribute(
+                            "cache.read.tokens",
+                            cache_read_tokens
+                        )
+
+                        coordination_span.set_attribute(
+                            "cache.creation.tokens",
+                            cache_creation_tokens
+                        )
+
+                    if (
+                        finance_span
+                        and thread_id
+                        and thread_id == finance_span_thread_id
+                    ):
+                        finance_span.set_attribute(
+                            "input.tokens",
+                            input_tokens
+                        )
+
+                        finance_span.set_attribute(
+                            "output.tokens",
+                            output_tokens
+                        )
+
+                        finance_span.set_attribute(
+                            "cache.read.tokens",
+                            cache_read_tokens
+                        )
+
+                        finance_span.set_attribute(
+                            "cache.creation.tokens",
+                            cache_creation_tokens
+                        )
+
+                    print("\nToken Usage")
                     print(
                         "Input Tokens:",
                         input_tokens
                     )
-
                     print(
                         "Output Tokens:",
                         output_tokens
-                    )
-
-                    print(
-                        "Cache Read Tokens:",
-                        cache_read_tokens
-                    )
-
-                    print(
-                        "Cache Creation Tokens:",
-                        cache_creation_tokens
-                    )
-
-                    print(
-                        "Total Tokens:",
-                        current_token_consumed
-                    )
-
-                    print(
-                        "Model:",
-                        MODEL_USED
                     )
 
                     await create_process_log(
@@ -294,11 +382,13 @@ CURRENT AGENT INPUT:
                         tool_id=tool_id,
                         tool_req=tool_request,
                         tool_response=tool_response,
-                        process_initiation="Model",
-                        process_destination=generated_agent,
+                        parent_agent="Model",
+                        child_agent=generated_agent,
                         input_data=question,
                         output_data="Model request completed",
-                        token_consumed=current_token_consumed,
+                        context_window=context_window,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
                         model_used=MODEL_USED
                     )
 
@@ -316,13 +406,22 @@ CURRENT AGENT INPUT:
                     None
                 )
 
+                if agent_name == "Coordination Agent":
+
+                    coordination_span.set_attribute(
+                        "thread.id",
+                        thread_id or session.id
+                    )
+
                 if agent_name in [
                     "Finance Agent",
                     "General Agent"
                 ]:
 
                     if agent_name not in participating_agents:
-                        participating_agents.append(agent_name)
+                        participating_agents.append(
+                            agent_name
+                        )
 
                     print(
                         "Coordination Agent →",
@@ -346,13 +445,43 @@ CURRENT AGENT INPUT:
                         tool_id=None,
                         tool_req=None,
                         tool_response=None,
-                        process_initiation="Coordination Agent",
-                        process_destination=agent_name,
+                        parent_agent="Coordination Agent",
+                        child_agent=agent_name,
                         input_data=question,
                         output_data="Request routed to agent",
-                        token_consumed=None,
+                        context_window=context_window,
+                        input_tokens=None,
+                        output_tokens=None,
                         model_used=MODEL_USED
                     )
+
+                    if agent_name == "Finance Agent":
+
+                        finance_span = tracer.start_span(
+                            "chat.finance_agent"
+                        )
+
+                        finance_span.set_attribute(
+                            "agent.name",
+                            "Finance Agent"
+                        )
+
+                        finance_span.set_attribute(
+                            "model.name",
+                            MODEL_USED
+                        )
+
+                        finance_span.set_attribute(
+                            "conversation.id",
+                            conversation_id
+                        )
+
+                        finance_span.set_attribute(
+                            "thread.id",
+                            thread_id or "unknown"
+                        )
+
+                        finance_span_thread_id = thread_id
 
             elif event.type == "agent.custom_tool_use":
 
@@ -367,31 +496,37 @@ CURRENT AGENT INPUT:
                 generated_agent = "Finance Agent"
                 generated_agent_id = finance_agent.id
 
-                print("\nFinance Agent → get_finance_data")
-                print("SQL Query:")
+                print(
+                    "\nFinance Agent → get_finance_data"
+                )
+
                 print(
                     "SQL Query:"
                 )
-
                 print(query)
 
-                await create_process_log(
-                    user_name=user_name,
-                    user_id=user_id,
-                    session_id=session.id,
-                    conversation_id=conversation_id,
-                    agent_id=finance_agent.id,
-                    agent_name="Finance Agent",
-                    env_id=ANTHROPIC_ENVIRONMENT_ID,
-                    tool_id=tool_id,
-                    tool_req=query,
-                    tool_response=None,
-                    process_initiation="Finance Agent",
-                    process_destination="get_finance_data",
-                    input_data=query,
-                    output_data="Tool request generated",
-                    token_consumed=None,
-                    model_used=MODEL_USED
+                tool_span = tracer.start_span(
+                    "chat.finance_tool"
+                )
+
+                tool_span.set_attribute(
+                    "tool.name",
+                    "get_finance_data"
+                )
+
+                tool_span.set_attribute(
+                    "agent.name",
+                    "Finance Agent"
+                )
+
+                tool_span.set_attribute(
+                    "conversation.id",
+                    conversation_id
+                )
+
+                tool_span.set_attribute(
+                    "tool.request",
+                    query
                 )
 
                 try:
@@ -400,12 +535,26 @@ CURRENT AGENT INPUT:
                         query
                     )
 
-                    tool_result = extract_tool_result(result)
+                    tool_result = extract_tool_result(
+                        result
+                    )
 
                     tool_response = tool_result
 
-                    print("Database result received:")
+                    print(
+                        "Database result received:"
+                    )
                     print(tool_result)
+
+                    tool_span.set_attribute(
+                        "tool.status",
+                        "success"
+                    )
+
+                    tool_span.set_attribute(
+                        "tool.response",
+                        tool_result
+                    )
 
                     await create_process_log(
                         user_name=user_name,
@@ -425,7 +574,7 @@ CURRENT AGENT INPUT:
                         context_window=None,
                         input_tokens=None,
                         output_tokens=None,
-                        model_used=None
+                        model_used=MODEL_USED
                     )
 
                     client.beta.sessions.events.send(
@@ -446,9 +595,23 @@ CURRENT AGENT INPUT:
 
                 except Exception as e:
 
-                    print("Database error:", str(e))
+                    print(
+                        "Database error:",
+                        str(e)
+                    )
 
-                    tool_response = f"Database error: {str(e)}"
+                    tool_response = (
+                        f"Database error: {str(e)}"
+                    )
+
+                    tool_span.record_exception(
+                        e
+                    )
+
+                    tool_span.set_attribute(
+                        "tool.status",
+                        "error"
+                    )
 
                     await create_process_log(
                         user_name=user_name,
@@ -465,11 +628,10 @@ CURRENT AGENT INPUT:
                         child_agent="get_finance_data",
                         input_data=query,
                         output_data=tool_response,
-                        token_consumed=None,
-                        model_used=MODEL_USED,
                         context_window=None,
                         input_tokens=None,
-                        output_tokens=None
+                        output_tokens=None,
+                        model_used=MODEL_USED
                     )
 
                     client.beta.sessions.events.send(
@@ -487,6 +649,14 @@ CURRENT AGENT INPUT:
                             }
                         ]
                     )
+
+                finally:
+
+                    if tool_span:
+
+                        tool_span.end()
+
+                        tool_span = None
 
             elif event.type == "agent.thread_message_received":
 
@@ -508,7 +678,9 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
-                        participating_agents.append(agent_name)
+                        participating_agents.append(
+                            agent_name
+                        )
 
                     agent_object = (
                         finance_agent
@@ -546,12 +718,28 @@ CURRENT AGENT INPUT:
                         parent_agent="Coordination Agent",
                         child_agent=agent_name,
                         input_data=question,
-                        output_data=f"{agent_name} response received",
+                        output_data=(
+                            f"{agent_name} response received"
+                        ),
                         context_window=context_window,
                         input_tokens=input_tokens,
                         output_tokens=output_tokens,
                         model_used=MODEL_USED
                     )
+
+                    if (
+                        agent_name == "Finance Agent"
+                        and finance_span
+                    ):
+
+                        finance_span.set_attribute(
+                            "status",
+                            "success"
+                        )
+
+                        finance_span.end()
+
+                        finance_span = None
 
             elif event.type == "agent.message":
 
@@ -571,15 +759,20 @@ CURRENT AGENT INPUT:
 
                 if text_parts:
 
-                    response_text = "".join(text_parts)
+                    response_text = "".join(
+                        text_parts
+                    )
 
                     final_response = response_text
+
                     coordination_process = coordination_rule(
                         question,
                         result=final_response
                     )
 
-                    print("\nAgent response:")
+                    print(
+                        "\nAgent response:"
+                    )
                     print(response_text)
 
                     usage = pending_model_usage.get(
@@ -633,9 +826,33 @@ CURRENT AGENT INPUT:
                     )
 
                     if reason_type == "end_turn":
-                        print("\nRequest completed")
+
+                        print(
+                            "\nRequest completed"
+                        )
+
                         break
+
+    if finance_span:
+
+        finance_span.set_attribute(
+            "status",
+            "success"
+        )
+
+        finance_span.end()
+
+        finance_span = None
+
+    coordination_span.set_attribute(
+        "status",
+        "success"
+    )
+
+    coordination_span.end()
+
     if not final_response:
+
         final_response = (
             "Sorry, I could not generate a response."
         )
@@ -651,11 +868,13 @@ CURRENT AGENT INPUT:
             tool_id=tool_id,
             tool_req=tool_request,
             tool_response=tool_response,
-            process_initiation="Coordination Agent",
-            process_destination="User",
+            parent_agent="Coordination Agent",
+            child_agent="User",
             input_data=question,
             output_data=final_response,
-            token_consumed=current_token_consumed,
+            context_window=context_window,
+            input_tokens=None,
+            output_tokens=None,
             model_used=MODEL_USED
         )
 
@@ -671,25 +890,6 @@ CURRENT AGENT INPUT:
         generated_agent
     )
 
-    await create_process_log(
-        user_name=user_name,
-        user_id=user_id,
-        session_id=session.id,
-        conversation_id=conversation_id,
-        agent_id=generated_agent_id,
-        agent_name=generated_agent,
-        env_id=ANTHROPIC_ENVIRONMENT_ID,
-        tool_id=tool_id,
-        tool_req=tool_request,
-        tool_response=tool_response,
-        process_initiation="Coordination Agent",
-        process_destination="User",
-        input_data=question,
-        output_data=final_response,
-        token_consumed=current_token_consumed,
-        model_used=MODEL_USED
-    )
-
     conversation_history.setdefault(
         conversation_id,
         []
@@ -700,7 +900,9 @@ CURRENT AGENT INPUT:
         }
     )
 
-    conversation_history[conversation_id].append(
+    conversation_history[
+        conversation_id
+    ].append(
         {
             "role": "assistant",
             "content": final_response
@@ -727,6 +929,11 @@ CURRENT AGENT INPUT:
         assistant_msg=final_response
     )
 
-    print("Chat logged to Supabase")
+    print(
+        "Chat logged to Supabase"
+    )
 
-    return final_response, generated_agent
+    return (
+        final_response,
+        generated_agent
+    )
