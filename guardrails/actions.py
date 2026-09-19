@@ -21,14 +21,11 @@ DEFAULT_REJECTION_MESSAGE = (
 )
 
 NON_FINANCE_REJECTION_MESSAGE = (
-    "I can assist with finance-related queries only. Please ask a question related "
-    "to financial data, invoices, purchase orders, inventory, costing, reconciliation, or CFO analytics."
+    "I can assist only with finance-related questions. Please ask a finance-based question, as this platform is designed specifically for finance and financial analytics."
 )
 
 PROFANITY_REJECTION_MESSAGE = (
-    "Please avoid using inappropriate or offensive language. "
-    "This is a professional finance platform, and professional language is expected. "
-    "I’m here to assist you with your finance-related queries."
+    "This is a finance-based platform. Please follow professional language and maintain appropriate communication. I’m here to assist with your finance-related questions."
 )
 
 SECURITY_REJECTION_MESSAGE = (
@@ -37,29 +34,23 @@ SECURITY_REJECTION_MESSAGE = (
 )
 
 PII_ONLY_REJECTION_MESSAGE = (
-    "Personal or sensitive information was detected and removed. "
-    "Please do not share personal or private information in this chat. "
-    "I am here to assist you with your finance-related queries."
+    "This message was removed because it contained personal or sensitive information.\n\n"
+    "Please do not share personal or private information in this chat."
 )
 
 PII_NON_FINANCE_REJECTION_MESSAGE = (
-    "This message was removed because it contained personal or sensitive information. "
-    "Please do not share personal or private information in this chat.\n\n"
-    "This is a professional finance-focused platform. Please ask finance-related questions only."
+    "This message was removed because it contained personal or sensitive information.\n\n"
+    "Please do not share personal or private information in this chat."
 )
 
-PII_FINANCE_CONFIRMATION_MESSAGE = (
-    "This message was removed because it contained personal or sensitive information. "
-    "Please do not share personal or private information in this chat.\n\n"
-    "I found a finance-related question in your message. Would you like me to process it?"
-)
-
-PII_FINANCE_NON_FINANCE_CONFIRMATION_MESSAGE = (
-    "This message was removed because it contained personal or sensitive information. "
-    "Please do not share personal or private information in this chat.\n\n"
-    "This is a professional finance-focused platform and non-finance questions cannot be processed. "
-    "I found a finance-related question in your message. Would you like me to process it?"
-)
+def get_pii_finance_confirmation_message(safe_query: str) -> str:
+    return (
+        "Your message contained personal or private information, so the original message has been deleted for your protection.\n\n"
+        "Please do not share personal information in this chat.\n\n"
+        f"I also detected a finance-related request in your message:\n\n"
+        f"'{safe_query}'\n\n"
+        "Would you like me to process this finance-related question?"
+    )
 
 _nvidia_init_error: str = ""
 if NVIDIA_API_KEY:
@@ -167,7 +158,7 @@ PII_PATTERNS = [
     # -- Home / Residential Address --
     r"(?i)\bi\s+(live|stay|reside)\s+(at|in)\s+[^\n,]+",
     r"(?i)\b(my\s+)?(home|residential|personal|private)\s+address\b",
-    # -- Bank / Card Accounts --
+    # -- Bank / Card Accounts / PIN / CVV / OTP / Credentials --
     r"(?i)\b(personal|private)?\s*(bank|savings|checking)\s+(account|acc)\s*(number|no\.?|details|info)?\s*(is|:|=)?\s*\d+",
     r"(?i)\b(bank\s+)?account\s*(no\.?|number)\s*(is|:|=)\s*\d+",
     r"(?i)\bmy\s+(bank\s+)?(account|acc)\b",
@@ -175,13 +166,16 @@ PII_PATTERNS = [
     r"(?i)\bcard\s*(number|no\.?)\s*(is|:|=)\s*\d+",
     r"\b(?:\d{4}[ -]){3}\d{4}\b",
     r"(?i)\bcvv\s*(is|:|=)?\s*\d{3,4}\b",
+    r"(?i)\b(pin|pin\s*code)\s*(is|:|=)?\s*\d{4,8}\b",
     r"(?i)\bifsc(\s*code)?\s*(is|:|=)?\s*[A-Z]{4}0[A-Z0-9]{6}\b",
+    r"(?i)\b(otp|one\s*time\s*pass(word|code)?|auth(entication)?\s*code|verification\s*code)\s*(is|:|=)?\s*\d{4,8}\b",
     # -- Passwords, Secrets, Tokens, API Keys, DB Credentials --
     r"(?i)\b(my\s+)?password\s*(is|:|=)\b",
-    r"(?i)\b(my\s+)?(api[_-]?key|secret|token)\s*(is|:|=)\b",
+    r"(?i)\b(username|user\s*id)\s*[:=]\s*\S+\s+and\s+(password|pass)\b",
+    r"(?i)\b(my\s+)?(api[_-]?key|secret|token|security[_-]?key)\s*(is|:|=)\b",
     r"\bsk-(?:ant-)?[a-zA-Z0-9_-]{20,}\b",
     r"\bAIza[0-9A-Za-z-_]{35}\b",
-    r"(?i)\b(service[_ -]?role[_ -]?key|access[_ -]?token|bearer[_ -]?token|auth[_ -]?token)\b",
+    r"(?i)\b(service[_ -]?role[_ -]?key|access[_ -]?token|bearer[_ -]?token|auth[_ -]?token|session[_ -]?token|refresh[_ -]?token)\b",
     r"(?i)\b(database|db)\s*(password|passwd|credentials?|conn(ection)?\s*string)\b",
     # -- Private Employee / Salary Information --
     r"(?i)\b(my\s+)?(salary|ctc|compensation|take[ -]?home)\s*(is|:|=)\b",
@@ -215,7 +209,7 @@ NON_FINANCE_FAST_PATTERNS = [
     r"(?i)\b(father\s+of\s+(our\s+|the\s+)?nation|capital\s+of\s+\w+|president\s+of\s+\w+|prime\s+minister)\b",
     r"(?i)\b(who\s+won\s+the\s+(last\s+)?election|who\s+is\s+the\s+current\s+president)\b",
     r"(?i)\b(tell|give|share)\s+(me\s+)?(a\s+)?(joke|riddle|funny\s+story|meme)\b",
-    r"(?i)\bwrite\s+(a\s+)?(python|javascript|java|c\+\+|rust|code|script)\b",
+    r"(?i)\bwrite\s+(a\s+)?(python|javascript|java|c\+\+|rust|code|script|poem)\b",
     r"(?i)\b(calculate\s+factorial|fibonacci|sort\s+an\s+array)\b",
     r"(?i)\b(cook|recipe|dinner|movie|song|music|cricket|football|game)\b",
 ]
@@ -309,15 +303,9 @@ def extract_safe_finance_portion(user_message: str) -> Optional[str]:
     """
     Safely extract the non-sensitive finance portion from a mixed message deterministically.
     Ensures that NO PII, redacted placeholder, or non-finance part is retained.
-    Example:
-    'My personal number is 1234567890 and give me the invoice amount for invoice 000025.'
-    -> 'Give me the invoice amount for invoice 000025.'
-    'What is the weather and what is working capital?'
-    -> 'What is working capital?'
     """
     msg = user_message.strip()
 
-    # Split clauses on conjunctions and punctuation, without splitting numbers with commas/decimals
     clauses = re.split(
         r"(?i)\b(?:and\s+also|and\s+then|as\s+well\s+as|and|also|then|but|moreover|furthermore|plus)\b|[;?\n]|(?<!\d),\s*(?!\d)",
         msg
@@ -328,7 +316,6 @@ def extract_safe_finance_portion(user_message: str) -> Optional[str]:
         c = clause.strip(" ,.;:-_?")
         if not c:
             continue
-        # Discard any clause containing PII, profanity, injection, or non-finance content
         if detect_pii(c) or detect_profanity(c) or detect_injection(c):
             continue
         if detect_non_finance(c):
@@ -344,7 +331,6 @@ def extract_safe_finance_portion(user_message: str) -> Optional[str]:
                 extracted += "?"
             else:
                 extracted += "."
-        # Final rigorous safety check on the extracted query
         if (
             not detect_pii(extracted)
             and not detect_profanity(extracted)
@@ -357,7 +343,7 @@ def extract_safe_finance_portion(user_message: str) -> Optional[str]:
 
 
 def sanitize_output_rules(text: str) -> str:
-    """Regex-based output sanitization for credentials, tokens, passwords, and private salaries."""
+    """Regex-based output sanitization for credentials, tokens, passwords, API keys, and internal details."""
     sanitized = text
 
     # API keys & security keys
@@ -370,15 +356,15 @@ def sanitize_output_rules(text: str) -> str:
     sanitized = re.sub(r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b", "[REDACTED_TOKEN]", sanitized)
 
     # Passwords and credentials
-    sanitized = re.sub(r"(?i)(password|passwd|secret_key|service_role_key)\s*[:=]\s*['\"][^'\"]+['\"]", r"\1: [REDACTED]", sanitized)
+    sanitized = re.sub(r"(?i)(password|passwd|secret_key|service_role_key|api_key)\s*[:=]\s*['\"][^'\"]+['\"]", r"\1: [REDACTED]", sanitized)
     sanitized = re.sub(r"(?i)(password|passwd)\s+is\s+['\"][^'\"]+['\"]", r"\1 is [REDACTED]", sanitized)
     sanitized = re.sub(r"(?i)(postgres(?:ql)?|mysql|mongodb)://[^:]+:[^@]+@[^\s]+", r"\1://[REDACTED_CREDENTIALS]@[REDACTED_HOST]", sanitized)
 
     # Private salaries
     sanitized = re.sub(r"(?i)(private\s+salary\s+is\s+)(\$[\d,]+|\d+\s*(USD|EUR|INR|per\s+year))", r"\1[REDACTED]", sanitized)
 
-    # Hidden system prompt leaks
-    sanitized = re.sub(r"(?i)(SECURITY\s*PROMPT|COORDINATION\s*AGENT\s*PROMPT|FINANCE\s*AGENT\s*PROMPT)\s*:[^\n]+", "", sanitized)
+    # Internal prompt / implementation detail leaks
+    sanitized = re.sub(r"(?i)(SECURITY\s*PROMPT|COORDINATION\s*AGENT\s*PROMPT|FINANCE\s*AGENT\s*PROMPT|SYSTEM\s*PROMPT)\s*:[^\n]+", "", sanitized)
 
     return sanitized
 
@@ -423,24 +409,26 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
 
     msg = user_message.strip()
 
-    # 1. Fast-allow standalone greetings to Coordination Agent
+    # 1. Handle standalone greetings directly (do NOT send to Coordination Agent)
     if is_standalone_greeting(msg):
         print(_SEP)
-        print("[INPUT GUARDRAIL]")
+        print("Input Guardrail called")
         print(f"User message: {_safe_preview(msg)}")
-        print("Status: ALLOWED (Standalone greeting)")
+        print("Input Guardrail: PASSED (Standalone Greeting)")
+        print("Action: Handled directly by Guardrail (Coordination Agent bypassed)")
         print(_SEP)
         return InputGuardrailResult(
-            is_allowed=True,
-            response_text="",
+            is_allowed=False,
+            response_text="Hello! How can I assist you with your finance-related question today?",
             is_deleted=False
         )
 
-    # 2. Check for Profanity / Abusive Language (Case 6)
+    # 2. Check for Profanity / Abusive Language
     if detect_profanity(msg):
         print(_SEP)
-        print("[INPUT GUARDRAIL]")
-        print("Status: BLOCKED (Profanity / Inappropriate language)")
+        print("Input Guardrail called")
+        print("Input Guardrail: BLOCKED")
+        print("Reason: Profanity / Abusive language")
         print(_SEP)
         return InputGuardrailResult(
             is_allowed=False,
@@ -451,9 +439,9 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
     # 3. Check for Prompt Injection / Jailbreak / Destructive DB
     if detect_injection(msg):
         print(_SEP)
-        print("[INPUT GUARDRAIL]")
-        print(f"User message: {_safe_preview(msg)}")
-        print("Status: BLOCKED (Security / Injection / Destructive DB)")
+        print("Input Guardrail called")
+        print("Input Guardrail: BLOCKED")
+        print("Reason: Prompt injection / Destructive DB attempt")
         print(_SEP)
         return InputGuardrailResult(
             is_allowed=False,
@@ -461,44 +449,30 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
             is_deleted=detect_pii(msg)
         )
 
-    # 4. Check for PII (Personal Information) - Case 1, Case 2, Case 3, Case 7
+    # 4. Check for PII (Personal Information)
     if detect_pii(msg):
         print(_SEP)
-        print("[INPUT GUARDRAIL]")
-        print("Status: BLOCKED (PII detected)")
+        print("Input Guardrail called")
+        print("Input Guardrail: BLOCKED")
+        print("Reason: PII (Personal / Sensitive Information)")
         print("Action: Sensitive content removed; raw message NOT displayed")
 
-        # Try to safely extract remaining finance question
         safe_query = extract_safe_finance_portion(msg)
         has_non_finance_clause = detect_non_finance(msg)
 
         if safe_query:
-            # Case 7: PII + Finance + Non-Finance
-            if has_non_finance_clause:
-                print(f"Extracted Safe Finance Query (Case 7): {safe_query}")
-                print(_SEP)
-                return InputGuardrailResult(
-                    is_allowed=False,
-                    response_text=PII_FINANCE_NON_FINANCE_CONFIRMATION_MESSAGE,
-                    is_deleted=True,
-                    requires_confirmation=True,
-                    safe_finance_query=safe_query
-                )
-            # Case 3: PII + Finance
-            print(f"Extracted Safe Finance Query (Case 3): {safe_query}")
+            print(f"Extracted Safe Finance Query: {safe_query}")
             print(_SEP)
             return InputGuardrailResult(
                 is_allowed=False,
-                response_text=PII_FINANCE_CONFIRMATION_MESSAGE,
+                response_text=get_pii_finance_confirmation_message(safe_query),
                 is_deleted=True,
                 requires_confirmation=True,
                 safe_finance_query=safe_query
             )
 
-        # No safe finance question present
-        # Case 2: PII + Non-Finance
         if has_non_finance_clause:
-            print("Status: BLOCKED (PII + Non-finance, Case 2)")
+            print("Status: BLOCKED (PII + Non-finance)")
             print(_SEP)
             return InputGuardrailResult(
                 is_allowed=False,
@@ -508,8 +482,7 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
                 safe_finance_query=None
             )
 
-        # Case 1: PII Only
-        print("Status: BLOCKED (PII Only, Case 1)")
+        print("Status: BLOCKED (PII Only)")
         print(_SEP)
         return InputGuardrailResult(
             is_allowed=False,
@@ -519,14 +492,14 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
             safe_finance_query=None
         )
 
-    # 5. Mixed Query: Finance + Non-Finance (Case 4)
-    # Do NOT block the whole message! Isolate the finance portion and process it.
+    # 5. Mixed Query: Finance + Non-Finance (No PII)
     if detect_finance_intent(msg) and detect_non_finance(msg):
         safe_query = extract_safe_finance_portion(msg)
         if safe_query:
             print(_SEP)
-            print("[INPUT GUARDRAIL]")
-            print(f"Status: ALLOWED (Mixed Query - Finance isolated: '{safe_query}')")
+            print("Input Guardrail called")
+            print("Input Guardrail: PASSED (Mixed Query - Finance isolated)")
+            print(f"Safe Finance Query sent to Coordination Agent: '{safe_query}'")
             print(_SEP)
             return InputGuardrailResult(
                 is_allowed=True,
@@ -536,12 +509,12 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
                 safe_finance_query=safe_query
             )
 
-    # 6. Fast-block clear non-finance questions without finance intent (Case 5)
+    # 6. Fast-block clear non-finance questions without finance intent
     if detect_non_finance(msg) and not detect_finance_intent(msg):
         print(_SEP)
-        print("[INPUT GUARDRAIL]")
-        print(f"User message: {_safe_preview(msg)}")
-        print("Status: BLOCKED (Non-finance request, Case 5)")
+        print("Input Guardrail called")
+        print("Input Guardrail: BLOCKED")
+        print("Reason: Non-finance question")
         print(_SEP)
         return InputGuardrailResult(
             is_allowed=False,
@@ -549,12 +522,11 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
             is_deleted=False
         )
 
-    # 7. Pure Finance Queries (e.g. "What is the invoice amount for invoice 000025?")
+    # 7. Pure Finance Queries
     if detect_finance_intent(msg):
         print(_SEP)
-        print("[INPUT GUARDRAIL]")
-        print(f"User message: {_safe_preview(msg)}")
-        print("Status: ALLOWED (Pure finance intent)")
+        print("Input Guardrail called")
+        print("Input Guardrail: PASSED")
         print(_SEP)
         return InputGuardrailResult(
             is_allowed=True,
@@ -566,6 +538,13 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
     api_key = os.getenv("NVIDIA_API_KEY")
     if not api_key:
         has_fin = detect_finance_intent(msg)
+        print(_SEP)
+        print("Input Guardrail called")
+        if has_fin:
+            print("Input Guardrail: PASSED")
+        else:
+            print("Input Guardrail: BLOCKED (Non-finance)")
+        print(_SEP)
         return InputGuardrailResult(
             is_allowed=has_fin,
             response_text="" if has_fin else NON_FINANCE_REJECTION_MESSAGE,
@@ -600,8 +579,9 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
             verdict = re.sub(r"<think>.*?</think>", "", raw_content, flags=re.DOTALL).strip().lower()
 
             if "unsafe" in verdict:
-                print("[INPUT GUARDRAIL]")
-                print("Status: BLOCKED (NVIDIA Nemotron 3.5 Content Safety)")
+                print(_SEP)
+                print("Input Guardrail called")
+                print("Input Guardrail: BLOCKED (NVIDIA Nemotron 3.5 Safety Policy)")
                 print(_SEP)
                 return InputGuardrailResult(
                     is_allowed=False,
@@ -610,8 +590,9 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
                 )
 
             if "safe" in verdict:
-                print("[INPUT GUARDRAIL]")
-                print("Status: ALLOWED (NVIDIA Nemotron 3.5 Content Safety)")
+                print(_SEP)
+                print("Input Guardrail called")
+                print("Input Guardrail: PASSED (NVIDIA Nemotron 3.5 Safety Policy)")
                 print(_SEP)
                 return InputGuardrailResult(
                     is_allowed=True,
@@ -620,9 +601,16 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
                 )
 
     except Exception as e:
-        print(f"[INPUT GUARDRAIL] Warning: NVIDIA API error ({e}). Using defensive local validation.")
+        print(f"[Input Guardrail] Warning: NVIDIA API error ({e}). Using defensive local validation.")
 
     has_fin = detect_finance_intent(msg)
+    print(_SEP)
+    print("Input Guardrail called")
+    if has_fin:
+        print("Input Guardrail: PASSED")
+    else:
+        print("Input Guardrail: BLOCKED (Non-finance)")
+    print(_SEP)
     return InputGuardrailResult(
         is_allowed=has_fin,
         response_text="" if has_fin else NON_FINANCE_REJECTION_MESSAGE,
@@ -639,7 +627,6 @@ async def check_output_guardrail(assistant_response: str) -> str:
     Evaluates assistant response BEFORE sending to Angular.
     Redacts sensitive keys, credentials, or private compensation information.
     Preserves all legitimate finance identifiers, amounts, dates, and tables.
-
     """
     if not assistant_response or not assistant_response.strip():
         return assistant_response or ""
