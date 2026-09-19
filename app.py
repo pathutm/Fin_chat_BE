@@ -1,6 +1,7 @@
 from fastapi import FastAPI
-from schemas.chat import ChatRequest, ChatResponse
+from fastapi.middleware.cors import CORSMiddleware
 
+from schemas.chat import ChatRequest, ChatResponse
 from services.chat import handle_chat_logic
 from services.memory import conversation_history
 from services.logging import create_process_log
@@ -10,10 +11,7 @@ from guardrails.actions import (
     check_output_guardrail
 )
 
-from fastapi.middleware.cors import CORSMiddleware
-
 app = FastAPI(title="Finance AI Chatbot")
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -26,7 +24,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-GUARDRAIL_MODEL = "openai/gpt-oss-20b"
+GUARDRAIL_MODEL = "nvidia/nemotron-3.5-content-safety"
+
 
 @app.get("/")
 def home():
@@ -37,8 +36,18 @@ def home():
 
 @app.post("/chat", response_model=ChatResponse)
 async def chat_endpoint(request: ChatRequest):
-    is_allowed, input_fallback = await check_input_guardrail(
+
+    # Step 1: Input Guardrail
+    print("\nInput Guardrail called")
+    print(f"User message: {request.message}")
+
+    guardrail_res = await check_input_guardrail(
         request.message
+    )
+
+    print(
+        "Input Guardrail:",
+        "PASSED" if guardrail_res.is_allowed else "BLOCKED"
     )
 
     await create_process_log(
@@ -57,7 +66,7 @@ async def chat_endpoint(request: ChatRequest):
         input_data=request.message,
         output_data=(
             "Input Guardrail ALLOWED"
-            if is_allowed
+            if guardrail_res.is_allowed
             else "Input Guardrail BLOCKED"
         ),
         context_window=None,
@@ -66,26 +75,63 @@ async def chat_endpoint(request: ChatRequest):
         model_used=GUARDRAIL_MODEL
     )
 
-    if not is_allowed:
+    # If input is blocked
+    if not guardrail_res.is_allowed:
+
         return ChatResponse(
-            response=input_fallback,
-            agent="Input Guardrail"
+            response=guardrail_res.response_text,
+            agent="Input Guardrail",
+            deleted=guardrail_res.is_deleted,
+            requires_confirmation=guardrail_res.requires_confirmation,
+            safe_finance_query=guardrail_res.safe_finance_query
         )
 
+    # Use safe query if guardrail modified the input
+    query_to_send = (
+        guardrail_res.safe_finance_query
+        if guardrail_res.safe_finance_query
+        else request.message
+    )
+
+    # Step 2: Coordination Agent
     print("\nCoordination Agent")
-    print("User message passed to Coordination Agent")
+    print(
+        f"User message passed to Coordination Agent: "
+        f"'{query_to_send}'"
+    )
 
     raw_response, generated_agent = await handle_chat_logic(
-        request.message,
+        query_to_send,
         request.conversation_id,
         user_name=request.user_name,
         user_id=request.user_id
     )
 
+    # Step 3: Output Guardrail
+    print("\nOutput Guardrail called")
+
     final_safe_response = await check_output_guardrail(
         raw_response
     )
 
+    print(
+        "Output Guardrail:",
+        "PASSED"
+        if final_safe_response == raw_response
+        else "SANITIZED"
+    )
+
+    # Sync memory if response was sanitized
+    if (
+        final_safe_response != raw_response
+        and request.conversation_id in conversation_history
+    ):
+        if conversation_history[request.conversation_id]:
+            conversation_history[
+                request.conversation_id
+            ][-1]["content"] = final_safe_response
+
+    # Log Output Guardrail
     await create_process_log(
         user_name=request.user_name,
         user_id=request.user_id,
@@ -103,7 +149,7 @@ async def chat_endpoint(request: ChatRequest):
         output_data=(
             "Output Guardrail ALLOWED"
             if final_safe_response == raw_response
-            else "Output Guardrail FORMATTED"
+            else "Output Guardrail SANITIZED"
         ),
         context_window=None,
         input_tokens=None,
@@ -111,49 +157,7 @@ async def chat_endpoint(request: ChatRequest):
         model_used=GUARDRAIL_MODEL
     )
 
-    if (
-        final_safe_response != raw_response
-        and request.conversation_id in conversation_history
-    ):
-        if conversation_history[request.conversation_id]:
-            conversation_history[
-                request.conversation_id
-            ][-1]["content"] = final_safe_response
-
-    await create_process_log(
-        user_name=request.user_name,
-        user_id=request.user_id,
-        session_id="guardrail",
-        conversation_id=request.conversation_id,
-        agent_id=None,
-        agent_name="Output Guardrail",
-        env_id=None,
-        tool_id=None,
-        tool_req=None,
-        tool_response=None,
-        parent_agent="Output Guardrail",
-        child_agent="User",
-        input_data=raw_response,
-        output_data=final_safe_response,
-        context_window=None,
-        input_tokens=None,
-        output_tokens=None,
-        model_used=GUARDRAIL_MODEL
-    )
-
-    # -----------------------------------------------------------------------
-    # Step 3: Output Guardrail (Sanitize/redact sensitive disclosures)
-    # -----------------------------------------------------------------------
-    final_safe_response = await check_output_guardrail(raw_response)
-
-    # Sync memory if sanitized so future conversation turns do not leak secrets
-    if final_safe_response != raw_response and request.conversation_id in conversation_history:
-        if conversation_history[request.conversation_id]:
-            conversation_history[request.conversation_id][-1]["content"] = final_safe_response
-
-    # -----------------------------------------------------------------------
-    # Step 4: Return safe response to Angular
-    # -----------------------------------------------------------------------
+    # Step 4: Return response to Angular
     return ChatResponse(
         response=final_safe_response,
         agent=generated_agent
