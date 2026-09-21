@@ -2,6 +2,7 @@ from agents.client import client
 from agents.skills_loader import FINANCE_SKILLS
 
 MODEL = "claude-haiku-4-5-20251001"
+#MODEL="openrouter/auto"
 
 SECURITY_PROMPT = """
 You are a secure business finance assistant.

@@ -28,3 +28,9 @@ if not SUPABASE_URL:
 if not SUPABASE_SERVICE_ROLE_KEY:
     raise ValueError("SUPABASE_SERVICE_ROLE_KEY is not set in the .env file")
 
+"""OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+if not OPENROUTER_API_KEY:
+    raise ValueError(
+        "OPENROUTER_API_KEY is not set in the .env file"
+    )"""

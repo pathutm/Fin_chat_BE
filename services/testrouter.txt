@@ -1,0 +1,26 @@
+import asyncio
+
+from services.openrouter import route_with_openrouter
+
+
+async def main():
+    result = await route_with_openrouter(
+        [
+            {
+                "role": "user",
+                "content": "Hello!"
+            }
+        ]
+    )
+
+    print("Selected model:")
+    print(result["model"])
+
+    print("\nResponse:")
+    print(result["content"])
+
+    print("\nUsage:")
+    print(result["usage"])
+
+
+asyncio.run(main())

@@ -1,0 +1,29 @@
+from openai import OpenAI
+
+from core.config import OPENROUTER_API_KEY
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=OPENROUTER_API_KEY
+)
+
+
+async def route_with_openrouter(
+    messages: list,
+    cost_tier: str = "low"
+):
+    response = client.chat.completions.create(
+        model="openrouter/auto",
+        messages=messages,
+        extra_body={
+            "cost_tier": cost_tier
+        }
+    )
+
+    message = response.choices[0].message
+
+    return {
+        "content": message.content,
+        "model": response.model,
+        "usage": response.usage
+    }
