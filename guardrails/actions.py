@@ -148,9 +148,9 @@ PII_PATTERNS = [
     r"\b\d{3}-\d{2}-\d{4}\b",
     r"(?i)\b(voter\s*(id|card)|national\s*id)\b",
     # -- Phone / Mobile numbers --
-    r"(?i)\b(my\s+)?(personal|private|mob(ile)?|cell(phone)?|phone|contact|whatsapp)\s*(no\.?|num(ber)?|#)?\s*(is|:|=)?\s*(\+?\d[\d\s\-]{7,}\d)",
-    r"(?i)\b(phone|mobile|mob|cell)\s+number\s*(is|:|=)?\s*(\+?\d[\d\s\-]{7,}\d)",
-    r"(?i)\bmy\s+(phone|number|mobile|cell|contact)\s+(is|:|=)\s*(\+?\d[\d\s\-]{7,}\d)",
+    r"(?i)\b(my\s+)?(personal|private|mob(ile)?|cell(phone)?|phone|contact|whatsapp)\s*(no\.?|num(ber)?|#)?\s*(is|:|=)?\s*(\+?\d[\d\s\-]{5,}\d)",
+    r"(?i)\b(phone|mobile|mob|cell)\s+number\s*(is|:|=)?\s*(\+?\d[\d\s\-]{5,}\d)",
+    r"(?i)\bmy\s+(phone|number|mobile|cell|contact)\s+(is|:|=)\s*(\+?\d[\d\s\-]{5,}\d)",
     r"(?i)\b(personal|private)\s+(contact|number|no\.?|details|info(rmation)?)\b",
     r"\b\d{10}\b",
     # -- Personal Email --
@@ -213,6 +213,31 @@ NON_FINANCE_FAST_PATTERNS = [
     r"(?i)\b(calculate\s+factorial|fibonacci|sort\s+an\s+array)\b",
     r"(?i)\b(cook|recipe|dinner|movie|song|music|cricket|football|game)\b",
 ]
+
+# Pending confirmation store: conversation_id -> safe_finance_query
+pending_confirmations: dict[str, str] = {}
+
+_NEGATIVE_CONFIRMATION_PATTERNS = [
+    r"(?i)^(no|nope|nah|no\s+thanks|no,?\s+thank\s+you|not\s+now|cancel|dont|don'?t|never\s*mind|n)[!.]*$",
+    r"(?i)^\s*(no|nope|nah|no\s+thanks|no,?\s+thank\s+you|not\s+now|cancel|don'?t\s+process(\s+it)?)[!.]*\s*$"
+]
+
+_AFFIRMATIVE_CONFIRMATION_PATTERNS = [
+    r"(?i)^(yes|yep|yeah|sure|ok|okay|please|go\s+ahead|process\s+it|y)[!.]*$",
+    r"(?i)^\s*(yes|yep|yeah|sure|ok|okay|please|go\s+ahead|y)\b"
+]
+
+
+def is_negative_confirmation(user_message: str) -> bool:
+    """Return True if the user's message is a negative confirmation / cancellation."""
+    msg = user_message.strip()
+    return any(re.search(p, msg) for p in _NEGATIVE_CONFIRMATION_PATTERNS)
+
+
+def is_affirmative_confirmation(user_message: str) -> bool:
+    """Return True if the user's message is an affirmative confirmation."""
+    msg = user_message.strip()
+    return any(re.search(p, msg) for p in _AFFIRMATIVE_CONFIRMATION_PATTERNS)
 
 # ---------------------------------------------------------------------------
 # Nemotron Safety Policy
@@ -394,7 +419,10 @@ def _format_response(text: str) -> str:
 # Core Input Guardrail Function
 # ---------------------------------------------------------------------------
 
-async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
+async def check_input_guardrail(
+    user_message: str,
+    conversation_id: Optional[str] = None
+) -> InputGuardrailResult:
     """
     Evaluates user input BEFORE the Coordination Agent is invoked.
     Enforces strict finance-only intent, PII/credential blocking, profanity blocking,
@@ -408,6 +436,41 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
         )
 
     msg = user_message.strip()
+    conv_key = conversation_id or "default"
+
+    # 0. Check for pending confirmation for this session
+    if conv_key in pending_confirmations:
+        pending_query = pending_confirmations[conv_key]
+        if is_negative_confirmation(msg):
+            pending_confirmations.pop(conv_key, None)
+            print(_SEP)
+            print("Input Guardrail called")
+            print("Input Guardrail: BLOCKED (User declined pending finance query confirmation)")
+            print("Action: Pending confirmation cleared")
+            print(_SEP)
+            return InputGuardrailResult(
+                is_allowed=False,
+                response_text="Okay, no problem. I won’t process the finance question. If you need anything else, feel free to ask.",
+                is_deleted=False,
+                requires_confirmation=False,
+                safe_finance_query=None
+            )
+        elif is_affirmative_confirmation(msg):
+            pending_confirmations.pop(conv_key, None)
+            print(_SEP)
+            print("Input Guardrail called")
+            print("Input Guardrail: PASSED (User confirmed pending finance query)")
+            print(f"Safe Finance Query sent to Coordination Agent: '{pending_query}'")
+            print(_SEP)
+            return InputGuardrailResult(
+                is_allowed=True,
+                response_text="",
+                is_deleted=False,
+                requires_confirmation=False,
+                safe_finance_query=pending_query
+            )
+        else:
+            pending_confirmations.pop(conv_key, None)
 
     # 1. Handle standalone greetings directly (do NOT send to Coordination Agent)
     if is_standalone_greeting(msg):
@@ -461,6 +524,7 @@ async def check_input_guardrail(user_message: str) -> InputGuardrailResult:
         has_non_finance_clause = detect_non_finance(msg)
 
         if safe_query:
+            pending_confirmations[conv_key] = safe_query
             print(f"Extracted Safe Finance Query: {safe_query}")
             print(_SEP)
             return InputGuardrailResult(

@@ -42,7 +42,8 @@ async def chat_endpoint(request: ChatRequest):
     print(f"User message: {request.message}")
 
     guardrail_res = await check_input_guardrail(
-        request.message
+        request.message,
+        conversation_id=request.conversation_id
     )
 
     print(

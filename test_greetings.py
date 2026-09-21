@@ -34,7 +34,8 @@ async def run():
     print("=" * 72)
     results = []
     for label, msg, exp in TESTS:
-        allowed, _ = await check_input_guardrail(msg)
+        res = await check_input_guardrail(msg)
+        allowed = res.is_allowed or ("Hello!" in res.response_text)
         ok = (allowed == exp)
         results.append((label, msg, "ALLOWED" if allowed else "BLOCKED",
                         "ALLOWED" if exp else "BLOCKED", "PASS ✅" if ok else "FAIL ❌"))
