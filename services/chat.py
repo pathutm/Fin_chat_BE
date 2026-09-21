@@ -63,18 +63,21 @@ async def handle_chat_logic(
     )
 
     print("\nCoordination Rule")
+
     print(
         "Money Related:",
         coordination_process[
             "currency_conversion_required"
         ]
     )
+
     print(
         "Target Currency:",
         coordination_process[
             "target_currency"
         ]
     )
+
     print(
         "Currency Reason:",
         coordination_process[
@@ -167,9 +170,11 @@ CURRENT AGENT INPUT:
 
     final_response = ""
 
+    # Final response attribution
     generated_agent = "Coordination Agent"
     generated_agent_id = coordination_agent.id
 
+    # Agents that participated in processing
     participating_agents = []
 
     tool_request = None
@@ -316,6 +321,7 @@ CURRENT AGENT INPUT:
                             or thread_id == session.id
                         )
                     ):
+
                         coordination_span.set_attribute(
                             "input.tokens",
                             input_tokens
@@ -341,6 +347,7 @@ CURRENT AGENT INPUT:
                         and thread_id
                         and thread_id == finance_span_thread_id
                     ):
+
                         finance_span.set_attribute(
                             "input.tokens",
                             input_tokens
@@ -362,10 +369,12 @@ CURRENT AGENT INPUT:
                         )
 
                     print("\nToken Usage")
+
                     print(
                         "Input Tokens:",
                         input_tokens
                     )
+
                     print(
                         "Output Tokens:",
                         output_tokens
@@ -376,14 +385,14 @@ CURRENT AGENT INPUT:
                         user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
-                        agent_id=generated_agent_id,
-                        agent_name=generated_agent,
+                        agent_id=coordination_agent.id,
+                        agent_name="Coordination Agent",
                         env_id=ANTHROPIC_ENVIRONMENT_ID,
                         tool_id=tool_id,
                         tool_req=tool_request,
                         tool_response=tool_response,
                         parent_agent="Model",
-                        child_agent=generated_agent,
+                        child_agent="Coordination Agent",
                         input_data=question,
                         output_data="Model request completed",
                         context_window=context_window,
@@ -419,6 +428,7 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
+
                         participating_agents.append(
                             agent_name
                         )
@@ -493,9 +503,6 @@ CURRENT AGENT INPUT:
                 tool_request = query
                 tool_id = event.id
 
-                generated_agent = "Finance Agent"
-                generated_agent_id = finance_agent.id
-
                 print(
                     "\nFinance Agent → get_finance_data"
                 )
@@ -503,6 +510,7 @@ CURRENT AGENT INPUT:
                 print(
                     "SQL Query:"
                 )
+
                 print(query)
 
                 tool_span = tracer.start_span(
@@ -544,6 +552,7 @@ CURRENT AGENT INPUT:
                     print(
                         "Database result received:"
                     )
+
                     print(tool_result)
 
                     tool_span.set_attribute(
@@ -678,6 +687,7 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
+
                         participating_agents.append(
                             agent_name
                         )
@@ -687,9 +697,6 @@ CURRENT AGENT INPUT:
                         if agent_name == "Finance Agent"
                         else general_agent
                     )
-
-                    generated_agent = agent_name
-                    generated_agent_id = agent_object.id
 
                     usage = pending_model_usage.get(
                         thread_id,
@@ -765,6 +772,12 @@ CURRENT AGENT INPUT:
 
                     final_response = response_text
 
+                    # The primary session belongs to the
+                    # Coordination Agent, so the final answer
+                    # is attributed to Coordination Agent.
+                    generated_agent = "Coordination Agent"
+                    generated_agent_id = coordination_agent.id
+
                     coordination_process = coordination_rule(
                         question,
                         result=final_response
@@ -773,6 +786,7 @@ CURRENT AGENT INPUT:
                     print(
                         "\nAgent response:"
                     )
+
                     print(response_text)
 
                     usage = pending_model_usage.get(

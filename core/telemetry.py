@@ -1,16 +1,13 @@
 from opentelemetry import trace, metrics
-from opentelemetry.sdk.resources import Resource
 
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     SpanExporter,
     SpanExportResult
 )
-
-from opentelemetry.sdk.metrics import (
-    MeterProvider
-)
+from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import (
     ConsoleMetricExporter,
     PeriodicExportingMetricReader
@@ -18,9 +15,7 @@ from opentelemetry.sdk.metrics.export import (
 
 from services.logging import create_telemetry_log
 
-
 SERVICE_NAME = "finance-ai-chatbot-backend"
-
 
 resource = Resource.create(
     {
@@ -32,11 +27,9 @@ resource = Resource.create(
 class SupabaseSpanExporter(SpanExporter):
 
     def export(self, spans):
-
         import asyncio
 
         async def save_spans():
-
             for span in spans:
 
                 trace_id = format(
@@ -69,11 +62,10 @@ class SupabaseSpanExporter(SpanExporter):
                     "tool.name"
                 )
 
-                status = (
-                    "error"
-                    if span.status.status_code.name == "ERROR"
-                    else "success"
-                )
+                if span.status.status_code.name == "ERROR":
+                    status = "error"
+                else:
+                    status = "success"
 
                 error_message = None
 
@@ -81,6 +73,26 @@ class SupabaseSpanExporter(SpanExporter):
                     error_message = str(
                         span.status.description
                     )
+
+                if not error_message:
+                    for event in span.events:
+                        if event.name == "exception":
+                            exception_attributes = dict(
+                                event.attributes
+                            )
+
+                            error_message = (
+                                exception_attributes.get(
+                                    "exception.message"
+                                )
+                            )
+
+                            if error_message:
+                                error_message = str(
+                                    error_message
+                                )
+
+                            break
 
                 input_tokens = attributes.get(
                     "input.tokens"
@@ -112,7 +124,6 @@ class SupabaseSpanExporter(SpanExporter):
             return SpanExportResult.SUCCESS
 
         except Exception as e:
-
             print(
                 f"[Telemetry] Export failed: {e}"
             )
@@ -133,18 +144,15 @@ tracer_provider = TracerProvider(
     resource=resource
 )
 
-
 tracer_provider.add_span_processor(
     BatchSpanProcessor(
         SupabaseSpanExporter()
     )
 )
 
-
 trace.set_tracer_provider(
     tracer_provider
 )
-
 
 tracer = trace.get_tracer(
     "finance-ai-chatbot"
@@ -155,7 +163,6 @@ metric_reader = PeriodicExportingMetricReader(
     ConsoleMetricExporter()
 )
 
-
 meter_provider = MeterProvider(
     resource=resource,
     metric_readers=[
@@ -163,11 +170,9 @@ meter_provider = MeterProvider(
     ]
 )
 
-
 metrics.set_meter_provider(
     meter_provider
 )
-
 
 meter = metrics.get_meter(
     "finance-ai-chatbot"
@@ -179,30 +184,25 @@ request_counter = meter.create_counter(
     description="Total number of chatbot requests"
 )
 
-
 mcp_counter = meter.create_counter(
     "finance_ai_mcp_requests_total",
     description="Total number of MCP requests"
 )
-
 
 mcp_error_counter = meter.create_counter(
     "finance_ai_mcp_errors_total",
     description="Total number of MCP errors"
 )
 
-
 request_duration = meter.create_histogram(
     "finance_ai_request_duration",
     description="Chatbot request duration"
 )
 
-
 input_token_counter = meter.create_counter(
     "finance_ai_input_tokens",
     description="Total input tokens"
 )
-
 
 output_token_counter = meter.create_counter(
     "finance_ai_output_tokens",

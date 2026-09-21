@@ -14,7 +14,6 @@ SUPABASE_MCP_URL = (
     f"?project_ref={SUPABASE_PROJECT_REF}&read_only=true"
 )
 
-
 HEADERS = {
     "Authorization": f"Bearer {SUPABASE_ACCESS_TOKEN}"
 }
@@ -40,7 +39,6 @@ async def fetch_finance_data(query: str):
     query_upper = query.upper()
 
     for command in blocked_commands:
-
         if command in query_upper:
             raise ValueError(
                 f"Blocked SQL operation: {command}"
@@ -74,6 +72,21 @@ async def fetch_finance_data(query: str):
                         }
                     )
 
+                    if hasattr(result, "isError") and result.isError:
+
+                        error_message = (
+                            extract_tool_result(result)
+                        )
+
+                        print(
+                            f"[DB Error] MCP execute_sql failed: "
+                            f"{error_message}"
+                        )
+
+                        raise RuntimeError(
+                            error_message
+                        )
+
                     return result
 
     except httpx.HTTPStatusError as e:
@@ -82,10 +95,10 @@ async def fetch_finance_data(query: str):
             f"[DB Error] HTTP Status Error: {e}"
         )
 
-        return (
-            "Database connectivity error: "
+        raise RuntimeError(
+            f"Database connectivity error: "
             f"HTTP {e.response.status_code}"
-        )
+        ) from e
 
     except (
         httpx.ConnectError,
@@ -96,11 +109,14 @@ async def fetch_finance_data(query: str):
             f"[DB Error] Network/Connection Error: {e}"
         )
 
-        return (
+        raise RuntimeError(
             "Database connectivity error: "
-            "Unable to reach database server. "
-            "Please try again later."
-        )
+            "Unable to reach database server."
+        ) from e
+
+    except ValueError:
+
+        raise
 
     except Exception as e:
 
@@ -116,21 +132,36 @@ async def fetch_finance_data(query: str):
             or "streamable" in err_str
         ):
 
-            return (
+            raise RuntimeError(
                 "Database query execution error: "
-                "The SQL query encountered an execution issue. "
-                "Please verify table and identifier parameters."
-            )
+                "The SQL query encountered an execution issue."
+            ) from e
 
-        return (
-            "Database query execution error: "
+        raise RuntimeError(
+            f"Database query execution error: "
             f"{err_str}"
-        )
+        ) from e
 
 
 def extract_tool_result(result):
 
     if hasattr(result, "isError") and result.isError:
+
+        texts = []
+
+        if hasattr(result, "content"):
+
+            for item in result.content:
+
+                if hasattr(item, "text"):
+
+                    texts.append(
+                        item.text
+                    )
+
+        if texts:
+
+            return "\n".join(texts)
 
         return (
             "Database query error: "
