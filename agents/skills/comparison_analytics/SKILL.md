@@ -1,109 +1,149 @@
 ---
-
 name: comparison-analytics
-description: Analyzes finance metrics across two or more entities or categories using actual CFO database results. Use for comparing vendors, products, plants, warehouses, customers, or other business entities. Determines the comparison dimension, metric, aggregation, filters, and result structure. Does not generate SQL, access MCP, or invent data.
---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+description: Defines methods for comparing financial, procurement, inventory, production, product, vendor, and customer data.
+---
 
-# Comparison Analytics
+# Comparison Analytics Skill
 
-Analyze finance metrics across entities or categories and structure the results for comparison and visualization.
+## Purpose
 
-## Principles
+Provide consistent comparisons between entities, periods, and financial metrics.
 
-* Use only actual database results.
-* Never invent, estimate, or assume missing values.
-* Identify the correct comparison dimension.
-* Preserve the user's requested filters and time range.
-* Follow the requested sorting or ordering.
-* Do not automatically convert a comparison into a ranking.
-* Do not generate SQL or access MCP.
+## Core Rules
 
-## Comparison Dimensions
+- Use only retrieved database values or user-provided values.
+- Compare the same metric across the same measurement basis.
+- Use consistent units and time periods.
+- Do not invent missing values.
+- Do not assume missing values are zero.
+- Keep comparisons factual and data-driven.
 
-Supported dimensions may include:
+## Entity Comparison
 
-* Vendors
-* Products
-* Plants
-* Warehouses
-* Customers
-* Purchase orders
-* Supplier invoices
-* Other supported business categories
+For comparisons between:
 
-## Required Analysis
+- Products
+- Vendors
+- Customers
+- Plants
+- Warehouses
+- Cost centres
+- Purchase orders
+- Invoices
 
-Identify:
+Use the same metric and calculation method for each entity.
 
-```text
-Comparison dimension:
-Metric:
-Aggregation:
-Filters:
-Time range:
-Sort order:
-Unit:
-```
+## Product Comparison
 
-Common aggregations:
+Possible metrics:
 
-* SUM
-* AVG
-* COUNT
-* MIN
-* MAX
+- Standard Cost
+- Actual Product Cost
+- Cost Variance
+- Cost Variance Percentage
+- Production Quantity
+- Order Quantity
+- Inventory Consumption
+- Material Consumption
 
-## Result Structure
+Keep the comparison period consistent when applicable.
 
-Return the analysis in this structure:
+## Vendor Comparison
 
-```text
-Title:
-Comparison dimension:
-Metric:
-Aggregation:
-Data:
-```
+Possible metrics:
 
-Preserve entity names, identifiers, and values exactly as returned by the database.
+- Purchase Quantity
+- Purchase Order Amount
+- Invoice Amount
+- Received Quantity
+- Rejected Quantity
+- Reconciliation Issues
 
-## Comparison Rules
+Do not mix purchase volume and invoice amount as the same metric.
 
-* Compare entities using the same metric and aggregation.
-* Apply requested time filters consistently across entities.
-* Calculate differences or variances only when explicitly requested.
-* Clearly distinguish database values from calculated values.
-* Do not treat missing data as zero unless zero is explicitly returned.
-* Do not add an arbitrary ranking when the user only requests comparison.
+## Customer Comparison
 
-## Visualization Guidance
+Possible metrics:
 
-* Bar chart: entity-level comparison.
-* Line chart: comparison across time.
-* Table: detailed multi-field comparison.
-* KPI: single aggregated comparison result when appropriate.
+- Order Quantity
+- Order Value
+- Number of Orders
+- Product Demand
 
-## Combined Analysis
+Use consistent periods and units.
 
-Comparison analysis can be combined with:
+## Period Comparison
 
-* Time-Series Analytics for comparisons across time.
-* Ranking Analytics when the user explicitly requests an ordered ranking.
-* Procurement Analytics for vendor and procurement comparisons.
-* Visualization Intent for presentation selection.
+For comparing periods:
 
-## Boundaries
+- Use the same metric.
+- Use equivalent time periods.
+- Calculate absolute difference when useful.
+- Calculate percentage change when requested.
 
-| Responsibility         | Owner                 |
-| ---------------------- | --------------------- |
-| Comparison analysis    | comparison-analytics  |
-| Intent detection       | visualization-intent  |
-| Time analysis          | time-series-analytics |
-| Ranking                | ranking-analytics     |
-| Procurement context    | procurement-analytics |
-| SQL / database queries | Finance Agent         |
-| MCP / Supabase         | MCP client            |
-| Final formatting       | finance-response      |
-| Rendering              | Frontend              |
+Percentage Change:
 
-Apply this skill when the user requests a comparison and actual database results are available.
+`((New Value − Old Value) / Old Value) × 100`
+
+If the old value is zero, do not calculate the percentage.
+
+## Multi-Metric Comparison
+
+When multiple metrics are requested:
+
+- Keep each metric separate.
+- Use a table when exact values are important.
+- Do not combine unrelated units into one calculated value.
+- Clearly label each metric.
+
+## Ranking Within Comparison
+
+If the user asks which entity has the highest or lowest value:
+
+- Compare the retrieved values.
+- Identify the relevant entity or entities.
+- Use the requested metric only.
+- Do not rank entities using an unstated metric.
+
+## Trend Comparison
+
+When comparing trends:
+
+- Use the same time periods.
+- Use the same metric.
+- Preserve chronological order.
+- Identify differences in direction or magnitude only when supported by the data.
+
+## Difference Analysis
+
+Absolute Difference:
+
+`Value A − Value B`
+
+Percentage Difference:
+
+Use the user-specified baseline.
+
+If no baseline is specified for a change comparison, use Value B as the baseline:
+
+`((Value A − Value B) / Value B) × 100`
+
+## Missing Data
+
+- If one entity has no matching records, report that the comparison cannot be completed for that entity.
+- Do not replace missing values with zero.
+- Do not create estimated values.
+
+## Error Handling
+
+- If no matching records are found, report the absence of data.
+- If database access fails, stop and report the technical issue.
+- Do not perform repeated trial-and-error queries.
+
+## Response Requirements
+
+- Present compared entities clearly.
+- Show the metric and values.
+- Include units and periods.
+- Show calculated differences when relevant.
+- Keep the comparison traceable to retrieved data.

@@ -1,98 +1,130 @@
 ---
-
 name: time-series-analytics
-description: Analyzes finance metrics across time using actual CFO database results. Use for daily, weekly, monthly, quarterly, yearly, historical, or trend questions. Determines the time dimension, granularity, aggregation, ordering, and trend structure. Does not generate SQL, access MCP, or invent data.
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+description: Defines methods for analyzing financial, procurement, inventory, production, and invoice trends over time.
+---
 
-# Time-Series Analytics
+# Time Series Analytics Skill
 
-Analyze finance metrics across time and structure the results for downstream visualization and response formatting.
+## Purpose
 
-## Principles
+Analyze chronological finance and business data consistently.
 
-* Use only actual database results.
-* Never invent, estimate, or assume missing values.
-* Identify the correct date field from available database fields.
-* Preserve the user's requested time range and granularity.
-* Order time periods chronologically.
-* Do not treat missing periods as zero unless the database explicitly returns zero.
-* Do not generate SQL or access MCP.
+## Core Rules
 
-## Supported Time Granularity
+- Use only retrieved database values or user-provided values.
+- Preserve chronological order.
+- Use consistent time periods.
+- Do not treat missing periods as zero.
+- Do not invent missing time-series values.
+- Use the minimum required database queries.
 
-* Daily
-* Weekly
-* Monthly
-* Quarterly
-* Yearly
+## Time Granularity
 
-## Required Analysis
+Use the granularity requested by the user:
 
-Identify:
+- Daily
+- Weekly
+- Monthly
+- Quarterly
+- Yearly
 
-```text
-Metric:
-Date field:
-Time range:
-Time granularity:
-Aggregation:
-Unit:
-Sort order:
-```
+If no granularity is specified for a trend request, use monthly analysis when sufficient date data is available.
 
-Common aggregations:
+## Trend Analysis
 
-* SUM
-* AVG
-* COUNT
-* MIN
-* MAX
+For time-series analysis:
 
-Use the appropriate supported date field, such as `po_date`, `invoice_date`, or `expected_delivery_date`, based on the database result and user request. Do not assume undocumented fields.
+- Group data by the selected time period.
+- Sort periods chronologically.
+- Show the actual value for each period.
+- Identify increases, decreases, and stable periods only from the retrieved data.
 
-## Time-Series Structure
+## Period-over-Period Change
 
-Return the analysis in this structure:
+Period Change = Current Period Value − Previous Period Value
 
-```text
-Title:
-Metric:
-Time granularity:
-Date field:
-Aggregation:
-Data:
-```
+Percentage Change:
 
-Preserve the actual returned period and value for every record.
+`((Current Period Value − Previous Period Value) / Previous Period Value) × 100`
 
-## Visualization Guidance
+If the previous period value is zero, do not calculate the percentage.
 
-* Line chart: trends over time.
-* Bar chart: discrete period comparisons.
-* Table: when detailed records are requested.
-* KPI: when the request asks for one aggregated value.
+## Year-over-Year Analysis
 
-## Combined Analysis
+Use the same period from consecutive years.
 
-Time-series analysis can be combined with:
+YoY Change:
 
-* Ranking for top or bottom entities by period.
-* Comparison for entity-level trends.
-* Procurement Analytics for procurement-related time trends.
-* Visualization Intent for presentation selection.
+`((Current Year Value − Previous Year Value) / Previous Year Value) × 100`
 
-## Boundaries
+## Monthly Analysis
 
-| Responsibility         | Owner                 |
-| ---------------------- | --------------------- |
-| Time-series analysis   | time-series-analytics |
-| Intent detection       | visualization-intent  |
-| Comparison             | comparison-analytics  |
-| Ranking                | ranking-analytics     |
-| Procurement context    | procurement-analytics |
-| SQL / database queries | Finance Agent         |
-| MCP / Supabase         | MCP client            |
-| Final formatting       | finance-response      |
-| Rendering              | Frontend              |
+For monthly trends:
 
-Apply this skill after time-series intent is identified and actual database results are available.
+- Group records by month.
+- Keep months in chronological order.
+- Preserve all available months.
+- Do not fill missing months with assumed values.
+
+## Trend Metrics
+
+Depending on the request, analyze:
+
+- Revenue
+- Invoice Amount
+- Invoice Quantity
+- Order Quantity
+- Inventory Receipts
+- Inventory Consumption
+- Production Quantity
+- Material Consumption
+- Cost
+- Cost Variance
+
+## Moving Averages
+
+Use a moving average only when requested or useful for identifying a trend.
+
+For an n-period moving average:
+
+`Average = Sum of n periods / n`
+
+Do not calculate a moving average when insufficient consecutive periods are available.
+
+## Trend Interpretation
+
+When summarizing a trend:
+
+- Identify the highest period.
+- Identify the lowest period.
+- Describe increases and decreases.
+- Mention significant changes only when supported by the data.
+- Do not infer business causes without supporting data.
+
+## Comparison of Trends
+
+When comparing two entities over time:
+
+- Use the same periods for both.
+- Use the same metric.
+- Preserve chronological order.
+- Clearly identify each entity.
+
+## Missing Data
+
+- Do not assume missing periods represent zero.
+- Do not interpolate missing values unless explicitly requested.
+- Clearly indicate unavailable periods when relevant.
+
+## Error Handling
+
+- If no records are returned, report that no matching records were found.
+- If dates are missing, do not create a time-series interpretation.
+- If the database fails, stop and report the technical issue.
+
+## Response Requirements
+
+- Present time-series results in chronological order.
+- Use a table or line chart when appropriate.
+- Include the relevant time period and metric.
+- Keep calculated changes traceable to retrieved values.

@@ -1,110 +1,117 @@
 ---
-
 name: visualization-intent
-description: Determines the analytical and presentation intent for CFO finance questions. Use for KPI, time-series, comparison, ranking, table, or text responses. Does not generate SQL, access MCP, retrieve data, or create chart code.
-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+description: Defines when financial analysis should be presented using tables, charts, or other visual formats.
+---
 
-# Visualization Intent
+# Visualization Intent Skill
 
-Identify the user's primary analytical intent and provide the structure needed by downstream analytics and frontend visualization.
+## Purpose
 
-## Principles
+Determine the appropriate presentation format for finance analysis results.
 
-* Understand the actual question and requested operation.
-* Use only actual database results; never invent or estimate data.
-* Preserve requested granularity and dimensions.
-* Do not force visualization when text or a KPI is sufficient.
-* Identify the metric, primary dimension, aggregation, and time dimension when applicable.
-* Choose one primary intent unless multiple views are explicitly requested.
-* Do not generate SQL, access MCP, or modify source data.
+## Core Rules
 
-## Intent Categories
+- Use visualizations only when they improve understanding.
+- Do not create visualizations for simple factual answers.
+- Use only retrieved or calculated data.
+- Do not invent or estimate chart values.
+- Keep visualizations focused on the user's question.
 
-### KPI / Single Value
+## Table
 
-Use for one aggregated value such as total, amount, count, or average.
+Use a table when:
 
-Preferred presentation: KPI.
+- Comparing a small number of products, vendors, customers, or periods.
+- Showing multiple metrics for the same entities.
+- Exact values are important.
+- The user explicitly asks to compare or list values.
 
-### Time-Series / Trend
+## Line Chart
 
-Use for metrics across time: daily, weekly, monthly, quarterly, yearly, historical, or trend questions.
+Use a line chart for:
 
-Preferred visualization: Line or time-series.
+- Monthly trends.
+- Yearly trends.
+- Time-series analysis.
+- Revenue or invoice amount trends.
+- Inventory movement over time.
+- Production trends over time.
 
-Use the Time-Series Analytics Skill for detailed temporal analysis.
+Use chronological order on the x-axis.
 
-### Comparison
+## Bar Chart
 
-Use when comparing a metric across entities or categories such as vendors, products, plants, warehouses, or customers.
+Use a bar chart for:
 
-Preferred visualization: Bar.
+- Comparing products.
+- Comparing vendors.
+- Comparing customers.
+- Ranking categories.
+- Comparing quantities or amounts across independent categories.
 
-Use the Comparison Analytics Skill for detailed comparison.
+Use a horizontal bar chart when there are many categories.
 
-### Ranking
+## Pie Chart
 
-Use for top/bottom, highest/lowest, largest/smallest, most/least, or Top-N requests.
+Use a pie chart only for simple part-to-whole analysis with a small number of categories.
 
-Preferred visualization: Bar.
+Examples:
 
-Use the Ranking Analytics Skill for detailed ranking.
+- Product cost components.
+- Cost distribution.
+- Revenue composition.
 
-### Table / Multiple Records
+Do not use pie charts for time-series trends.
 
-Use for document-level details, lists, or multiple fields.
+## Scatter Chart
 
-Preferred presentation: Table.
+Use a scatter chart when the user asks about relationships between two numerical variables.
 
-### Text
+Examples:
 
-Use for definitions, explanations, status, or questions where visualization adds no value.
+- Invoice quantity vs invoice amount.
+- Ordered quantity vs invoice quantity.
+- Cost vs production quantity.
 
-Preferred presentation: Text.
+## Visualization Selection
 
-## Decision Rules
+Use:
 
-| Request pattern                                | Intent      |
-| ---------------------------------------------- | ----------- |
-| Total / amount / count / average               | KPI         |
-| By month / week / quarter / year / over time   | Time-Series |
-| Compare / across entities                      | Comparison  |
-| Top / bottom / highest / lowest / most / least | Ranking     |
-| List / records / details                       | Table       |
-| Definition / explanation / status              | Text        |
+- Simple retrieval → text or table.
+- Comparison → table or bar chart.
+- Trend → line chart.
+- Ranking → bar chart.
+- Part-to-whole → pie chart.
+- Numeric relationship → scatter chart.
+- Multiple metrics → table or appropriate chart.
 
-If multiple patterns appear, follow the primary request.
+## Multi-Metric Visualization
 
-## Required Intent Information
+When multiple metrics are requested:
 
-```text
-Intent:
-Metric:
-Primary dimension:
-Time dimension:
-Aggregation:
-Requested limit:
-Requested granularity:
-Preferred visualization:
-```
+- Use a table when exact values are important.
+- Use separate visualizations only when each adds meaningful information.
+- Do not overload one chart with unrelated metrics.
 
-Populate only supported fields.
+## Data Requirements
 
-## Boundaries
+Before visualization:
 
-| Responsibility         | Owner                 |
-| ---------------------- | --------------------- |
-| Intent detection       | visualization-intent  |
-| Time analysis          | time-series-analytics |
-| Comparison             | comparison-analytics  |
-| Ranking                | ranking-analytics     |
-| Procurement context    | procurement-analytics |
-| SQL / database queries | Finance Agent         |
-| MCP / Supabase         | MCP client            |
-| Routing                | Coordination Agent    |
-| Final formatting       | finance-response      |
-| Rendering              | Frontend              |
+- Verify that the required data was successfully retrieved.
+- Use consistent units.
+- Use consistent time periods.
+- Preserve chronological order for time-series data.
+- Do not replace missing values with zero unless the database explicitly records zero.
 
-This skill determines intent only. Do not generate SQL, call MCP, access Supabase, fabricate data, or modify frontend configuration.
+## Error Handling
 
-Apply this skill before the specialized analytics skill.
+- If there is insufficient data, do not create a misleading visualization.
+- If the query returns no records, report that no matching data was found.
+- If the database fails, stop visualization generation and report the technical issue.
+
+## Response Requirements
+
+- Keep the visualization directly related to the user's question.
+- Provide a short explanation of what the visualization shows.
+- Use clear labels and units.
+- Do not add unnecessary charts.

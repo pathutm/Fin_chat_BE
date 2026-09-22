@@ -1,119 +1,108 @@
 ---
-
 name: ranking-analytics
-description: Analyzes finance metrics to identify and order the highest, lowest, top-N, or bottom-N entities using actual CFO database results. Use for rankings of vendors, products, plants, warehouses, customers, purchase orders, invoices, or other supported entities. Determines the ranking dimension, metric, aggregation, direction, limit, and filters. Does not generate SQL, access MCP, or invent data.
-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+description: Defines methods for ranking products, vendors, customers, costs, quantities, and operational metrics.
+---
 
-# Ranking Analytics
+# Ranking Analytics Skill
 
-Analyze finance metrics to identify and order entities according to the user's requested ranking.
+## Purpose
 
-## Principles
+Provide consistent ranking analysis using retrieved finance and business data.
 
-* Use only actual database results.
-* Never invent, estimate, or assume missing values.
-* Identify the correct ranking dimension and metric.
-* Preserve requested filters and time range.
-* Follow the requested ranking direction.
-* Do not choose an arbitrary limit when the user does not specify one.
-* Do not generate SQL or access MCP.
+## Core Rules
 
-## Ranking Triggers
+- Use only retrieved database values or user-provided values.
+- Rank only using the metric requested by the user.
+- Do not invent missing values.
+- Do not treat missing values as zero.
+- Use consistent units and time periods.
+- Preserve ties when values are equal.
 
-Use for requests containing:
+## Ranking Metrics
 
-* Top-N
-* Bottom-N
-* Highest
-* Lowest
-* Largest
-* Smallest
-* Most
-* Least
-* Maximum
-* Minimum
+Possible ranking metrics include:
 
-## Required Analysis
+- Purchase Quantity
+- Purchase Order Amount
+- Invoice Amount
+- Order Quantity
+- Order Value
+- Production Quantity
+- Inventory Consumption
+- Material Consumption
+- Cost
+- Cost Variance
+- Cost Variance Percentage
+- Rejected Quantity
+- Reconciliation Mismatches
 
-Identify:
+## Highest Ranking
 
-```text
-Ranking dimension:
-Metric:
-Aggregation:
-Direction:
-Limit:
-Filters:
-Time range:
-Unit:
-```
+When the user asks for the highest:
 
-Direction:
+- Sort the requested metric in descending order.
+- Return the highest value first.
+- Include the entity name or identifier.
+- Preserve ties.
 
-* Top / highest / largest / most / maximum → descending
-* Bottom / lowest / smallest / least / minimum → ascending
+## Lowest Ranking
 
-Common aggregations:
+When the user asks for the lowest:
 
-* SUM
-* AVG
-* COUNT
-* MIN
-* MAX
+- Sort the requested metric in ascending order.
+- Return the lowest value first.
+- Include the entity name or identifier.
+- Preserve ties.
 
-## Ranking Structure
+## Top-N Ranking
 
-Return the analysis in this structure:
+For requests such as top 5 or top 10:
 
-```text
-Title:
-Ranking dimension:
-Metric:
-Aggregation:
-Direction:
-Limit:
-Data:
-```
+- Return exactly the requested number when enough records exist.
+- Sort by the requested metric.
+- Preserve ties where applicable.
+- Do not substitute another metric.
 
-Preserve entity names, identifiers, and values exactly as returned by the database.
+## Ranking by Percentage
 
-## Ranking Rules
+For percentage-based rankings:
 
-* Apply the requested limit when provided.
-* If no limit is specified, do not arbitrarily select Top 5 or Top 10.
-* Preserve ties when values are equal.
-* Do not invent tie-breaking rules.
-* Apply requested time filters consistently.
-* Do not treat missing data as zero unless zero is explicitly returned.
-* Clearly distinguish stored values from calculated values.
+- Use the relevant database percentage field when available.
+- Otherwise calculate the percentage using the appropriate formula.
+- Sort the calculated percentages consistently.
 
-## Combined Analysis
+## Time-Based Ranking
 
-Ranking analysis can be combined with:
+When ranking by time period:
 
-* Time-Series Analytics for rankings by period.
-* Comparison Analytics when entity comparisons are also requested.
-* Procurement Analytics for vendor, PO, GRN, and invoice rankings.
-* Visualization Intent for presentation selection.
+- Use the same metric across all periods.
+- Preserve chronological labels when presenting the result.
+- Rank based on the requested measure, not the date.
 
-## Visualization Guidance
+## Ranking Comparison
 
-* Bar chart: ranked entities.
-* Table: detailed ranking records.
-* Line chart: ranking changes across time when explicitly requested.
+When comparing ranked entities:
 
-## Boundaries
+- Show the entity.
+- Show the ranking metric.
+- Show the value.
+- Clearly state the requested ranking order.
 
-| Responsibility         | Owner                 |
-| ---------------------- | --------------------- |
-| Ranking analysis       | ranking-analytics     |
-| Intent detection       | visualization-intent  |
-| Time analysis          | time-series-analytics |
-| Comparison             | comparison-analytics  |
-| Procurement context    | procurement-analytics |
-| SQL / database queries | Finance Agent         |
-| MCP / Supabase         | MCP client            |
-| Final formatting       | finance-response      |
-| Rendering              | Frontend              |
+## Missing Data
 
-Apply this skill when the user requests a ranking and actual database results are available.
+- Exclude records with missing values from a calculation only when necessary.
+- Do not replace missing values with zero.
+- State when insufficient data prevents reliable ranking.
+
+## Error Handling
+
+- If no matching records are found, report that no matching data was found.
+- If database access fails, stop and report the technical issue.
+- Do not perform repeated trial-and-error queries.
+
+## Response Requirements
+
+- Clearly identify the ranking metric.
+- Show the requested ranking order.
+- Include values and units.
+- Keep rankings traceable to retrieved database data.

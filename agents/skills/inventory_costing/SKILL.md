@@ -1,196 +1,136 @@
 ---
 name: inventory-costing
-description: Guides inventory movement analysis, material consumption, BOM comparison, and product cost variance using the CFO Analysis Industry Database tables, relationships, and confirmed costing rules.
+description: Defines inventory costing, stock movement, material usage, and inventory variance analysis methods.
 ---
 
-# Inventory & Costing
+# Inventory Costing Skill
 
-Inventory and product costing rules for the Finance Agent. Covers **inventory movements, material consumption, BOM analysis, and cost variance**. Does not execute SQL, route requests, or format final responses.
+## Purpose
 
-## Confirmed project context
+Apply consistent methods for inventory, material consumption, stock movement, and product costing analysis.
 
-- **Database:** CFO Analysis Industry Database (21 relational tables, read-only).
-- **Business flow segment:** … → Reconciliation → Cost Centre Allocation → **Inventory Transaction** → **Material Consumption** → **Product Cost** → Line of Business
+## Core Rules
 
-## Confirmed tables and relationships
+- Use only retrieved database values or user-provided values.
+- Do not invent inventory quantities or costs.
+- Preserve the original units.
+- Use chronological order for inventory trends.
+- Prefer existing database calculation fields when available.
+- Do not treat missing records as zero.
 
-| Table | Role | Key relationships |
-|-------|------|-------------------|
-| `inventory_transaction` | Perpetual warehouse stock ledger | `product_id` → `product`; `warehouse_id` → `warehouse` |
-| `warehouse` | Warehouse master | Referenced by `inventory_transaction`, `purchase_order`, `goods_receipt_note` |
-| `product` | Product master | `lob_id` → `line_of_business`; referenced across procurement, BOM, costing |
-| `material_consumption` | Actual production material usage | `production_order_id` → `production_order`; `finished_product_id`, `raw_material_id` → `product`; `cost_centre_id` → `cost_centre` |
-| `production_order` | Production runs | `finished_product_id` → `product`; `plant_id` → `plant`; `production_cost_centre_id` → `cost_centre` |
-| `bill_of_material` | Planned raw-material requirements | `finished_product_id`, `raw_material_id` → `product` |
-| `product_cost` | Finished-product standard costing | `finished_product_id` → `product` |
-| `cost_centre_allocation` | Cost allocation from GRN lines | `grn_line_id` → `goods_receipt_note_line`; `cost_centre_id` → `cost_centre` |
+## Inventory Position
 
-### Confirmed identifiers
+Use inventory transaction data to analyze:
 
-| Entity | Primary key |
-|--------|-------------|
-| `inventory_transaction` | `transaction_id` |
-| `material_consumption` | `consumption_id` |
-| `production_order` | `production_order_id` |
-| `product_cost` | `product_cost_id` |
-| `product` | `product_id` (VARCHAR, e.g., `'PROD-0001'`) |
-| `warehouse` | `warehouse_id` |
+- Opening Quantity
+- Receipt Quantity
+- Consumption Quantity
+- Transfer Quantity
+- Adjustment Quantity
+- Closing Quantity
 
-All identifiers are VARCHAR/TEXT strings.
+Use `inventory_transaction.closing_quantity` as the recorded closing quantity when available.
 
-### Production and BOM scale (documented)
+## Inventory Movement
 
-- 22 finished products
-- 38 raw materials
-- 88 BOM records
-- Each finished product has raw-material BOM relationships in `bill_of_material`
+For inventory movement analysis, calculate or report:
 
----
+- Total Receipts
+- Total Consumption
+- Total Transfers
+- Total Adjustments
+- Average Closing Quantity
 
-## Confirmed formulas
+Use `inventory_transaction` fields for these metrics.
 
-### Inventory Balance
+## Net Inventory Movement
 
-```
-Inventory Balance = Opening Balance + Receipts − Consumption + Transfers ± Adjustments
-```
+Net Movement = Receipt Quantity − Consumption Quantity ± Adjustments
 
-| Item | Detail |
-|------|--------|
-| **Source table** | `inventory_transaction` |
-| **Scope** | Filter by `product_id` and `warehouse_id` |
-| **Movement types** | The ledger covers **receipts**, **consumption**, **transfers**, and **adjustments** |
-| **Procedure** | 1) Fix product/warehouse scope. 2) Classify transaction rows by movement type. 3) Aggregate each category. 4) Apply formula. |
-| **Warehouse-level** | Always scope by both `product_id` and `warehouse_id` when warehouse is relevant. |
-| **Result type** | Calculated from ledger movements unless a stored balance exists in query results. |
+Include transfers separately unless the user explicitly asks to include them in net movement.
 
-### Cost Variance
+## Material Consumption
 
-```
-Cost Variance = Actual Product Cost − Standard Cost
-```
+Use `material_consumption` for production material usage.
 
-| Item | Detail |
-|------|--------|
-| **Standard cost source** | `product_cost` joined via `finished_product_id` |
-| **Actual cost** | From query results for the same finished product and period |
-| **Procedure** | Obtain both values for the same scope; subtract. Positive = actual exceeds standard. |
-| **Result type** | Calculated unless a stored variance column exists. |
+Relevant metrics:
 
----
+- Expected Quantity
+- Actual Quantity
+- Variance Quantity
+- Variance Percentage
 
-## Inventory analysis
+Prefer `variance_quantity` and `variance_percent` when available.
 
-### Movement classification
+## Material Consumption Variance
 
-Classify `inventory_transaction` rows into the formula categories:
+Variance Quantity = Expected Quantity − Actual Quantity
 
-| Movement | Effect on balance |
-|----------|-------------------|
-| **Receipts** | Add |
-| **Consumption** | Subtract |
-| **Transfers** | Add inbound / subtract outbound (or apply net transfer total) |
-| **Adjustments** | Apply signed adjustment values |
+Variance Percentage = ((Actual Quantity − Expected Quantity) / Expected Quantity) × 100
 
-### Workflow
+If expected quantity is zero, do not calculate the percentage.
 
-1. Resolve `product_id` (and `warehouse_id` if needed) using the `product` table.
-2. Retrieve `inventory_transaction` rows for the scope.
-3. Aggregate by movement type.
-4. Apply the Inventory Balance formula.
-5. Label result as stored or calculated.
+## Product Cost Analysis
 
----
+Use `product_cost` for product-level costing.
 
-## Material consumption
+Relevant cost components:
 
-### Actual material consumption
-
-Sum consumption from `material_consumption` for the scoped `raw_material_id`, `finished_product_id`, `production_order_id`, or `cost_centre_id`.
-
-### Production-related consumption
-
-Link via `material_consumption.production_order_id` → `production_order.production_order_id`.
-
-### BOM / planned vs actual
-
-Compare planned requirements from `bill_of_material` to actual usage from `material_consumption` for the same `finished_product_id` and `raw_material_id`.
-
-**Material variance (when both sides exist):**
-
-```
-Material Variance = Actual Consumption − Planned/BOM Quantity
-```
-
-Use the same `product_id` string identifiers on both sides. Do not compute if BOM or consumption data is absent for the scope.
-
----
-
-## Product costing
-
-### Standard product costing
-
-`product_cost` contains finished-product standard costing information, keyed by `finished_product_id`.
-
-### Documented cost components
-
-The project documents these standard cost components for finished products:
-
-- Direct Raw Material Cost
+- Standard Cost
+- Material Cost
 - Direct Labour Cost
-- Machine Extrusion Cost
-- Utilities & Power Cost
-- Quality Assurance & Testing Cost
-- Packaging & Bundling Cost
-- Manufacturing Overhead Allocation
+- Machine Cost
+- Utilities Cost
+- Quality Cost
+- Packaging Cost
+- Manufacturing Overhead Cost
+- Actual Product Cost
+- Cost Variance
+- Cost Variance Percentage
 
-Report component breakdown only when query results expose these values. Do not invent component column names beyond what query results confirm.
+## Cost Component Share
 
-### Actual vs standard
+Component Share = (Component Cost / Actual Product Cost) × 100
 
-When both actual and standard product cost exist for the same finished product:
+Use only when actual product cost is available and non-zero.
 
-1. Report each value.
-2. Compute Cost Variance using the confirmed formula.
-3. Prefer stored variance if present for the scope.
+## Inventory Trend Analysis
 
-### Cost variance interpretation
+For monthly inventory analysis:
 
-State factually: "Actual cost exceeds standard by [amount]" or "Actual cost is below standard by [amount]." Do not assign root cause unless supported by additional query data.
+- Group inventory transactions by month.
+- Maintain chronological order.
+- Report receipts, consumption, transfers, adjustments, and closing quantity separately.
+- Do not assume missing months represent zero activity.
 
----
+## Inventory Comparison
 
-## Cost centre allocation
+When comparing products:
 
-`cost_centre_allocation` links procurement receipts to cost centres:
+- Use the same time period.
+- Use the same inventory metric.
+- Compare quantities using the same unit of measure.
+- Clearly identify each product.
 
-- `cost_centre_allocation.grn_line_id` → `goods_receipt_note_line.grn_line_id`
-- `cost_centre_allocation.cost_centre_id` → `cost_centre.cost_centre_id`
+## Inventory and Cost Analysis
 
-Use when questions connect received materials to cost centre allocation.
+When both inventory and cost information are requested:
 
----
+- Use `inventory_transaction` for inventory movement.
+- Use `product_cost` for product costing.
+- Do not mix inventory quantity with monetary cost without explicitly identifying the metric.
 
-## Aggregation and data quality
+## Error Handling
 
-- **Multiple transactions:** Sum within the same `product_id` / `warehouse_id` scope; deduplicate by `transaction_id`.
-- **Cumulative quantities:** Sum chronologically for period-end balance.
-- **Negative balances:** Report factually; do not clamp to zero unless data convention requires it.
-- **Missing movement category:** Treat as zero only when confirmed no activity; otherwise note the category as missing.
+- If no inventory records exist, report that no matching inventory records were found.
+- If required cost data is missing, state that the cost calculation cannot be completed.
+- Do not estimate missing inventory values.
+- Do not treat missing periods as zero.
 
----
+## Response Requirements
 
-## Rules of conduct
-
-1. Use documented tables, VARCHAR identifiers, and relationships only.
-2. Resolve product names to `product_id` strings before joining.
-3. Prefer stored balances, `pending_quantity`, and stored variance over recalculation when authoritative.
-4. Database access remains **read-only**.
-
-## Out of scope
-
-- SQL generation and MCP execution.
-- Procurement three-way match (procurement-reconciliation skill).
-- Liquidity ratios (financial-ratios skill).
-- General non-inventory formulas (financial-formulas skill).
-- Response formatting (finance-response skill).
+- Identify the product, material, warehouse, or period being analyzed.
+- Show quantities with their units.
+- Show monetary values with the correct currency.
+- Show calculated variances clearly.
+- Keep results traceable to retrieved database values.

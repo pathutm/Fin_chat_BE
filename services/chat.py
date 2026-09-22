@@ -63,26 +63,26 @@ async def handle_chat_logic(
     )
 
     print("\nCoordination Rule")
-
     print(
         "Money Related:",
-        coordination_process[
-            "currency_conversion_required"
-        ]
+        coordination_process.get(
+            "currency_conversion_required",
+            False
+        )
     )
-
     print(
         "Target Currency:",
-        coordination_process[
-            "target_currency"
-        ]
+        coordination_process.get(
+            "target_currency",
+            "SOURCE"
+        )
     )
-
     print(
         "Currency Reason:",
-        coordination_process[
-            "currency_reason"
-        ]
+        coordination_process.get(
+            "currency_reason",
+            "Preserve the original database currency unless the user explicitly requests another currency."
+        )
     )
 
     context_window = f"""
@@ -104,45 +104,53 @@ GENERAL AGENT:
 
 COORDINATION RULES:
 
-Currency Conversion:
+Currency Requirement:
 
-{coordination_process["currency_reason"]}
+{coordination_process.get(
+    "currency_reason",
+    "Preserve the original database currency unless the user explicitly requests another currency."
+)}
 
 Target Currency:
 
-{coordination_process["target_currency"]}
+{coordination_process.get(
+    "target_currency",
+    "SOURCE"
+)}
 
 Output Formatting:
 
-{coordination_process["output_format"]}
+{coordination_process.get(
+    "output_format",
+    "Preserve the original database currency."
+)}
 
-STRICT CURRENCY REQUIREMENT:
+STRICT MONEY / CURRENCY REQUIREMENT:
 
-If currency_conversion_required is True:
-
-- Every monetary value in the final response MUST be displayed in USD.
-- All INR monetary values MUST be converted to USD.
-- Use the "$" symbol for every USD monetary value.
-- Do NOT display the "₹" symbol in the final response.
-- Do NOT display "INR" in the final response.
-- Do NOT simply replace "₹" or "INR" with "$".
-- The monetary value must represent the converted USD amount.
-- Format USD monetary values with exactly two decimal places.
-- Do not provide mixed INR and USD monetary values.
-
-If currency_conversion_required is False:
-
-- Preserve the original database currency.
-- Do not perform unnecessary currency conversion.
+- If the user asks a money-related question, do NOT automatically convert the amount to INR.
+- Do NOT automatically convert the amount to USD either.
+- Preserve the original currency returned by the database.
+- If the database value is in INR, keep it in INR.
+- If the database value is in USD, keep it in USD.
+- If the database value is in EUR, keep it in EUR.
+- If the database contains multiple currencies, preserve each currency separately.
+- Only perform currency conversion when the user explicitly asks for conversion.
+- If the user explicitly asks for INR, convert to INR only when a valid conversion mechanism is available.
+- If the user explicitly asks for USD, convert to USD only when a valid conversion mechanism is available.
+- Never change only the currency symbol while keeping the original numeric value.
+- Never assume INR just because the user is located in India.
+- Never assume USD unless the user explicitly requests USD.
+- Do not mix currencies incorrectly in the final response.
 
 FINAL RESPONSE REQUIREMENT:
 
-Before returning the final response, verify that every monetary value follows
-the currency conversion requirement.
-
-Final Response:
-
-{coordination_process["response_rule"]}
+Before returning the final response:
+1. Check whether the question is money-related.
+2. Check the currency of the database result.
+3. Preserve the source currency unless the user explicitly requested conversion.
+4. Never automatically convert monetary values to INR.
+5. Never automatically convert monetary values to USD.
+6. Do not invent exchange rates.
 
 PREVIOUS CONVERSATION:
 
@@ -170,11 +178,9 @@ CURRENT AGENT INPUT:
 
     final_response = ""
 
-    # Final response attribution
     generated_agent = "Coordination Agent"
     generated_agent_id = coordination_agent.id
 
-    # Agents that participated in processing
     participating_agents = []
 
     tool_request = None
@@ -321,7 +327,6 @@ CURRENT AGENT INPUT:
                             or thread_id == session.id
                         )
                     ):
-
                         coordination_span.set_attribute(
                             "input.tokens",
                             input_tokens
@@ -347,7 +352,6 @@ CURRENT AGENT INPUT:
                         and thread_id
                         and thread_id == finance_span_thread_id
                     ):
-
                         finance_span.set_attribute(
                             "input.tokens",
                             input_tokens
@@ -369,30 +373,22 @@ CURRENT AGENT INPUT:
                         )
 
                     print("\nToken Usage")
-
-                    print(
-                        "Input Tokens:",
-                        input_tokens
-                    )
-
-                    print(
-                        "Output Tokens:",
-                        output_tokens
-                    )
+                    print("Input Tokens:", input_tokens)
+                    print("Output Tokens:", output_tokens)
 
                     await create_process_log(
                         user_name=user_name,
                         user_id=user_id,
                         session_id=session.id,
                         conversation_id=conversation_id,
-                        agent_id=coordination_agent.id,
-                        agent_name="Coordination Agent",
+                        agent_id=generated_agent_id,
+                        agent_name=generated_agent,
                         env_id=ANTHROPIC_ENVIRONMENT_ID,
                         tool_id=tool_id,
                         tool_req=tool_request,
                         tool_response=tool_response,
                         parent_agent="Model",
-                        child_agent="Coordination Agent",
+                        child_agent=generated_agent,
                         input_data=question,
                         output_data="Model request completed",
                         context_window=context_window,
@@ -428,7 +424,6 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
-
                         participating_agents.append(
                             agent_name
                         )
@@ -503,14 +498,14 @@ CURRENT AGENT INPUT:
                 tool_request = query
                 tool_id = event.id
 
+                generated_agent = "Finance Agent"
+                generated_agent_id = finance_agent.id
+
                 print(
                     "\nFinance Agent → get_finance_data"
                 )
 
-                print(
-                    "SQL Query:"
-                )
-
+                print("SQL Query:")
                 print(query)
 
                 tool_span = tracer.start_span(
@@ -552,7 +547,6 @@ CURRENT AGENT INPUT:
                     print(
                         "Database result received:"
                     )
-
                     print(tool_result)
 
                     tool_span.set_attribute(
@@ -664,7 +658,6 @@ CURRENT AGENT INPUT:
                     if tool_span:
 
                         tool_span.end()
-
                         tool_span = None
 
             elif event.type == "agent.thread_message_received":
@@ -687,7 +680,6 @@ CURRENT AGENT INPUT:
                 ]:
 
                     if agent_name not in participating_agents:
-
                         participating_agents.append(
                             agent_name
                         )
@@ -697,6 +689,9 @@ CURRENT AGENT INPUT:
                         if agent_name == "Finance Agent"
                         else general_agent
                     )
+
+                    generated_agent = agent_name
+                    generated_agent_id = agent_object.id
 
                     usage = pending_model_usage.get(
                         thread_id,
@@ -745,7 +740,6 @@ CURRENT AGENT INPUT:
                         )
 
                         finance_span.end()
-
                         finance_span = None
 
             elif event.type == "agent.message":
@@ -772,21 +766,12 @@ CURRENT AGENT INPUT:
 
                     final_response = response_text
 
-                    # The primary session belongs to the
-                    # Coordination Agent, so the final answer
-                    # is attributed to Coordination Agent.
-                    generated_agent = "Coordination Agent"
-                    generated_agent_id = coordination_agent.id
-
                     coordination_process = coordination_rule(
                         question,
                         result=final_response
                     )
 
-                    print(
-                        "\nAgent response:"
-                    )
-
+                    print("\nAgent response:")
                     print(response_text)
 
                     usage = pending_model_usage.get(
@@ -855,7 +840,6 @@ CURRENT AGENT INPUT:
         )
 
         finance_span.end()
-
         finance_span = None
 
     coordination_span.set_attribute(

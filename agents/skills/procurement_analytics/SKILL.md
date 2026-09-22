@@ -1,213 +1,179 @@
 ---
 
 name: procurement-analytics
-description: Analyzes procurement-related finance questions using actual CFO database results. Use for purchase orders, purchase order lines, vendors, goods receipt notes, supplier invoices, invoice lines, procurement amounts, quantities, and procurement document relationships. Does not generate SQL, access MCP, or invent data.
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+description: Defines methods for analyzing procurement performance, purchasing activity, supplier performance, purchase orders, receipts, invoices, and procurement trends.
+---
 
-# Procurement Analytics
+# Procurement Analytics Skill
 
-Analyze procurement-related finance questions using the CFO database structure and actual retrieved results.
+## Purpose
 
-## Procurement Tables
+Analyze procurement performance using retrieved purchase order, goods receipt, supplier invoice, vendor, and reconciliation data.
 
-Primary procurement tables include:
+## Core Rules
 
-* `purchase_order`
-* `purchase_order_line`
-* `vendor`
-* `goods_receipt_note`
-* `goods_receipt_note_line`
-* `supplier_invoice`
-* `supplier_invoice_line`
-* `reconciliation`
+- Use only retrieved database values or user-provided values.
+- Use confirmed database relationships.
+- Do not invent procurement values.
+- Do not assume missing values are zero.
+- Keep quantities, prices, and monetary amounts clearly separated.
+- Use consistent time periods and units.
 
-## Procurement Flow
+## Purchase Analysis
 
-```text
-Purchase Order
-→ Purchase Order Line
-→ Vendor
-→ Goods Receipt Note
-→ GRN Line
-→ Supplier Invoice
-→ Invoice Line
-→ Reconciliation
-```
+Analyze:
 
-Related production flow:
+- Purchase Order Count
+- Ordered Quantity
+- Purchase Order Amount
+- Average Unit Price
+- Expected Delivery Date
+- Purchase Order Status
 
-```text
-Customer Order
-→ Production Order
-→ BOM
-→ Purchase Order
-```
+Purchase Order Amount:
 
-## Purchase Order Analysis
+`Ordered Quantity × Unit Price`
 
-Support analysis of:
+Use `purchase_order_line.ordered_quantity` and `purchase_order_line.unit_price`.
 
-* Purchase order amounts
-* Purchase order dates
-* Purchase order status
-* Vendor purchase orders
-* Expected delivery
-* Procurement trends
-* Procurement comparisons
-* Procurement rankings
+## Supplier Performance
 
-Use only fields returned by the database.
+Analyze vendors using:
 
-## Purchase Order Line Analysis
+- Purchase Quantity
+- Purchase Order Amount
+- Invoice Amount
+- Received Quantity
+- Rejected Quantity
+- Reconciliation Status
 
-Support:
+Keep supplier metrics based on the appropriate source table.
 
-* Ordered quantity
-* Unit price
-* PO line value
+## Purchase Volume
 
-A line value may be calculated as:
+Purchase Volume can be measured using:
 
-```text
-ordered quantity × unit price
-```
+- Total Ordered Quantity
+- Total Purchase Order Amount
+- Number of Purchase Orders
 
-Only calculate when both inputs are available, and clearly identify the result as calculated.
+Use the metric requested by the user.
 
-## Vendor Analysis
+## Goods Receipt Performance
 
-Support:
+Analyze:
 
-* Purchase order amount
-* Invoice amount
-* Purchase order count
-* Vendor comparisons
-* Vendor rankings
+- Delivered Quantity
+- Accepted Quantity
+- Rejected Quantity
+- Damaged Quantity
+- Remaining PO Quantity
 
-Vendor analysis can be combined with comparison, ranking, and time-series analytics.
+Acceptance Rate:
 
-## Goods Receipt Analysis
+`Accepted Quantity / Delivered Quantity × 100`
 
-Support:
+Rejection Rate:
 
-* Received quantities
-* Accepted quantities
-* GRN details
-* PO-to-GRN relationships
-* Partial receipts
-* Receipt variances
+`Rejected Quantity / Delivered Quantity × 100`
 
-Do not treat ordered, received, accepted, and invoiced quantities as interchangeable.
+## Invoice Procurement Analysis
 
-## Supplier Invoice Analysis
+Analyze:
 
-Relevant fields include:
+- Total Invoice Amount
+- Invoice Quantity
+- Average Invoice Unit Price
+- Discount Amount
+- Tax
+- Freight Amount
 
-* `invoice_id`
-* `grn_id`
-* `po_id`
-* `vendor_id`
-* `invoice_date`
-* `invoice_number`
-* `invoice_quantity`
-* `tax`
-* `freight_amount`
-* `discount_amount`
-* `invoice_amount`
-* `payment_due_date`
-* `payment_terms`
+Use `supplier_invoice.invoice_amount` for invoice-level analysis.
 
-Support invoice amount, quantity, vendor, date, payment terms, and related procurement analysis.
+Use `supplier_invoice_line.line_amount` for invoice-line analysis.
 
-## Supplier Invoice Line Analysis
+## Procurement Variance
 
-Support:
+Quantity Variance:
 
-* Invoiced quantity
-* Unit price
-* Variance quantity
-* Variance amount
-* Tax percentage when returned
+`Ordered Quantity − Received Quantity`
 
-A line value may be calculated as:
+Invoice Quantity Variance:
 
-```text
-invoiced quantity × unit price
-```
+`Received Quantity − Invoice Quantity`
 
-Only calculate when the required values are available.
+Price Variance:
 
-## Procurement Amounts
+`Invoice Unit Price − PO Unit Price`
 
-Identify the document level before analyzing amounts.
+Use only when the corresponding records can be correctly matched.
 
-Do not substitute:
+## Procurement Efficiency
 
-* Invoice amount for PO amount
-* PO amount for invoice amount
-* Line amount for document amount
+Useful indicators include:
 
-Use the actual stored value or clearly identify calculated values.
+- PO fulfillment rate
+- GRN acceptance rate
+- GRN rejection rate
+- Invoice-to-PO quantity ratio
+- Procurement cost variance
+- Reconciliation success rate
 
-## Procurement Quantities
+Calculate ratios only when the required denominator is available and non-zero.
 
-Keep these quantities distinct:
+## Overdue Procurement
 
-* Ordered quantity
-* Received quantity
-* Accepted quantity
-* Invoiced quantity
+For overdue purchase orders:
 
-Do not assume they are equal.
+- Use `expected_delivery_date`.
+- Compare against the relevant reference date.
+- Consider `po_status`.
+- Do not mark completed or closed orders as overdue without supporting evidence.
 
-## Reconciliation
+## Procurement Trend
 
-Use available relationships between:
+For procurement trends:
 
-```text
-Purchase Order
-→ Goods Receipt Note
-→ Supplier Invoice
-→ Reconciliation
-```
+- Group by the requested date period.
+- Preserve chronological order.
+- Analyze purchase quantity, purchase amount, invoice amount, or order count as requested.
+- Do not treat missing periods as zero.
 
-When available, use stored fields such as:
+## Supplier Comparison
 
-* `matching_status`
-* `matched_quantity`
-* `variance_quantity`
-* `variance_amount`
+When comparing suppliers:
 
-If a required document or relationship is missing, report the missing information rather than inventing it.
+- Use the same metric for every supplier.
+- Use the same time period.
+- Preserve equal values as ties.
+- Do not combine unrelated metrics into a single ranking.
 
-## Combined Analysis
+## Procurement Risk Indicators
 
-Procurement Analytics can be combined with:
+Identify data-supported indicators such as:
 
-* Time-Series Analytics for procurement trends.
-* Comparison Analytics for vendor or procurement comparisons.
-* Ranking Analytics for top or bottom vendors.
-* Visualization Intent for presentation selection.
+- High rejected quantities
+- Large PO-to-invoice quantity differences
+- Unit price mismatches
+- Failed reconciliations
+- Overdue purchase orders
+- High procurement cost variance
 
-## Missing Data
+Do not label a supplier or transaction as risky unless the retrieved data supports the conclusion.
 
-* Use only returned database values.
-* Report missing or incomplete procurement data.
-* Never fabricate procurement records, amounts, quantities, dates, or relationships.
-* Do not assume undocumented fields.
+## Error Handling
 
-## Boundaries
+- If no matching procurement data exists, report that no matching records were found.
+- If required fields are missing, do not invent replacements.
+- If a database query fails because of an unknown field, do not guess another field.
+- If database connectivity or permission fails, stop and report the technical issue.
+- Do not perform repeated trial-and-error queries.
 
-| Responsibility         | Owner                 |
-| ---------------------- | --------------------- |
-| Procurement analysis   | procurement-analytics |
-| Intent detection       | visualization-intent  |
-| Time analysis          | time-series-analytics |
-| Comparison             | comparison-analytics  |
-| Ranking                | ranking-analytics     |
-| SQL / database queries | Finance Agent         |
-| MCP / Supabase         | MCP client            |
-| Final formatting       | finance-response      |
-| Rendering              | Frontend              |
+## Response Requirements
 
-This skill provides procurement-domain analysis only. Do not generate SQL, call MCP, access Supabase directly, fabricate data, or modify source data.
+- Identify the procurement metric being analyzed.
+- Clearly distinguish PO, GRN, invoice, vendor, and reconciliation data.
+- Show quantities with units.
+- Show monetary values with currency.
+- Present trends and comparisons in a clear table or visualization when appropriate.
+- Keep results traceable to retrieved database values.

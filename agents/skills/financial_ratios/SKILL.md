@@ -1,106 +1,136 @@
 ---
 name: financial-ratios
-description: Calculates and explains financial ratios supportable from the CFO Analysis Industry Database. Use when the user asks for ratio interpretation based on documented tables, stored variance fields, or confirmed calculable inputs.
+description: Defines standard financial ratio calculations for profitability, cost, efficiency, liquidity, and performance analysis.
 ---
 
-# Financial Ratios
+# Financial Ratios Skill
 
-Ratio calculation and factual interpretation rules for the Finance Agent. This skill covers **ratios only**. Use the financial-formulas skill for underlying calculations.
+## Purpose
 
-## Confirmed project context
+Apply standard financial ratios when the required financial data is available.
 
-- **Database:** CFO Analysis Industry Database (21 relational tables, read-only).
-- **No ratio thresholds, benchmarks, or good/bad labels** are defined in project documentation. Interpretation must remain factual and descriptive only.
-- **Do not add generic ratios** (debt-to-equity, ROE, ROA, quick ratio, inventory turnover, etc.) unless required inputs exist in documented tables for the requested scope.
+## Core Rules
 
-## Ratio supportability
+- Use only retrieved database values or user-provided values.
+- Do not invent missing values.
+- Use consistent periods and units.
+- Round ratios and percentages to 2 decimal places.
+- If the denominator is zero, do not calculate the ratio.
+- Prefer existing database fields when they directly provide the requested metric.
 
-| State | Meaning |
-|-------|---------|
-| **Stored** | A ratio or metric column is returned directly from the database. |
-| **Calculated** | Required inputs exist in query results and the ratio is derived using documented formulas. |
-| **Unavailable** | Required inputs are not documented in the CFO schema; do not calculate or guess. |
+## Profit Margin
 
----
+Profit Margin = (Profit / Revenue) × 100
 
-## Supported ratios
+If profit is not directly available:
 
-### Current Ratio
+Profit = Revenue − Cost
 
-| Item | Detail |
-|------|--------|
-| **Formula** | `Current Ratio = Current Assets ÷ Current Liabilities` |
-| **Required inputs** | Current Assets total; Current Liabilities total. |
-| **Confirmed source fields/tables** | **Not mapped** to documented columns in the 21-table CFO schema. |
-| **Supportability** | **Unavailable** for database-backed answers unless query results contain explicit current-asset and current-liability totals for the requested scope. |
-| **What it measures** | Ability to cover short-term obligations with short-term assets. |
-| **Interpretation** | When calculable, state the value and meaning factually (e.g., "Current assets are 1.5 times current liabilities for [scope]."). Do not label as good, bad, healthy, or weak. |
-| **Zero denominator** | If Current Liabilities = 0, ratio is unavailable. |
-| **Precision** | Unitless ratio to 2 decimal places (e.g., 1.50), not a percentage. |
+## Cost Variance Percentage
 
-When unavailable, direct conceptual explanations to the General Agent; do not invent balance-sheet figures.
+Cost Variance Percentage = ((Actual Cost − Standard Cost) / Standard Cost) × 100
 
-### Working Capital (absolute liquidity metric)
+Use the existing `cost_variance_percent` field when available.
 
-Not a ratio, but commonly paired with Current Ratio.
+## Quantity Variance Percentage
 
-| Item | Detail |
-|------|--------|
-| **Formula** | `Working Capital = Current Assets − Current Liabilities` |
-| **Required inputs** | Current Assets; Current Liabilities. |
-| **Confirmed source fields/tables** | **Not mapped** to documented columns in the 21-table CFO schema. |
-| **Supportability** | **Unavailable** for database-backed answers unless both inputs exist in query results. |
-| **What it measures** | Net short-term resource cushion after current liabilities. |
-| **Interpretation** | State the amount and scope factually. Positive = assets exceed liabilities by that amount; negative = liabilities exceed assets. No normative judgment. |
-| **Precision** | Currency, 2 decimal places. |
+Quantity Variance Percentage = ((Actual Quantity − Expected Quantity) / Expected Quantity) × 100
 
----
+Use the existing `variance_percent` field when available.
 
-## Procurement variance metrics (documented, not generic ratios)
+## Invoice-to-PO Quantity Ratio
 
-These are **documented CFO database metrics** on `supplier_invoice_line`. Treat as stored reconciliation indicators, not generic financial ratios:
+Invoice-to-PO Ratio = Invoice Quantity / PO Quantity
 
-| Metric | Source | Meaning |
-|--------|--------|---------|
-| `variance_quantity` | `supplier_invoice_line` | Stored quantity variance from 3-way matching |
-| `variance_amount` | `supplier_invoice_line` | Stored amount variance from 3-way matching |
-| `matching_status` | `supplier_invoice_line` | Stored line-level match status |
+Use matching PO and invoice records.
 
-When presenting these, describe what the stored field represents. Do not recalculate if the stored value is authoritative for the line. Full matching logic is in the procurement-reconciliation skill.
+## GRN Acceptance Rate
 
-### Tax rate on invoice lines
+GRN Acceptance Rate = (Accepted Quantity / Delivered Quantity) × 100
 
-| Item | Detail |
-|------|--------|
-| **Field** | `tax_percent` on `supplier_invoice_line` |
-| **Supportability** | **Stored** — report directly when the question asks for invoice-line tax rate. |
-| **Interpretation** | State the percentage applied on the line; do not infer tax policy beyond the stored value. |
+If delivered quantity is zero, do not calculate the rate.
 
----
+## GRN Rejection Rate
 
-## Calculation workflow
+GRN Rejection Rate = (Rejected Quantity / Delivered Quantity) × 100
 
-1. Identify the ratio or metric requested and the scope.
-2. Check for a **stored** value in documented columns.
-3. If not stored, verify required inputs exist in query results.
-4. If inputs are missing, classify as **Unavailable** and list what is missing.
-5. If inputs exist, compute using financial-formulas rules.
-6. Interpret factually — describe what the number means, not whether it is desirable.
+If delivered quantity is zero, do not calculate the rate.
 
-## Handling comparisons
+## Damaged Quantity Rate
 
-- Use the same definition and input sources for each comparison point.
-- Note scope differences (period, product, vendor, document) factually.
-- Do not attribute causes unless supported by query data.
+Damaged Quantity Rate = (Damaged Quantity / Delivered Quantity) × 100
 
-## Percentage vs ratio
+If delivered quantity is zero, do not calculate the rate.
 
-- **Current Ratio** is a unitless decimal ratio, not multiplied by 100.
-- **`tax_percent`** is a stored percentage on invoice lines — present with a `%` suffix.
-- Do not convert formats unless the storage convention is visible in query results.
+## Invoice Discount Percentage
 
-## Out of scope
+Invoice Discount Percentage = (Discount Amount / Invoice Amount) × 100
 
-- Underlying input aggregation (financial-formulas skill).
-- Procurement trace and 3-way match workflow (procurement-reconciliation skill).
-- SQL, MCP, routing, or response formatting.
+Use only when both values are available and the requested interpretation is appropriate.
+
+## Purchase Order Fulfillment Rate
+
+Purchase Order Fulfillment Rate = (Accepted GRN Quantity / Ordered PO Quantity) × 100
+
+Use matching PO and GRN records.
+
+## Payment Due Analysis
+
+For payment-related analysis:
+
+- Identify invoice amount.
+- Identify payment due date.
+- Compare against the requested reference date when applicable.
+- Do not assume an invoice is overdue without a valid date comparison.
+
+## Year-over-Year Ratio Analysis
+
+YoY Percentage Change = ((Current Period − Previous Period) / Previous Period) × 100
+
+Use consistent periods.
+
+## Product Cost Structure
+
+When analyzing product cost:
+
+Total Product Cost may include:
+
+- Material Cost
+- Direct Labour Cost
+- Machine Cost
+- Utilities Cost
+- Quality Cost
+- Packaging Cost
+- Manufacturing Overhead Cost
+
+Use the corresponding `product_cost` fields.
+
+## Cost Component Percentage
+
+Component Percentage = (Component Cost / Total Product Cost) × 100
+
+Use `actual_product_cost` as the total when appropriate.
+
+## Ratio Comparison
+
+When comparing two products, vendors, customers, or periods:
+
+- Calculate the same ratio for each item.
+- Use the same denominator definition.
+- Present the values side by side.
+- Do not mix different time periods.
+
+## Error Handling
+
+- If required values are missing, state that the ratio cannot be calculated.
+- If the denominator is zero, report that the ratio is undefined.
+- Do not estimate missing financial values.
+- Do not use unrelated fields to construct a ratio.
+
+## Response Requirements
+
+- Show the ratio name.
+- Show the calculated value.
+- Include `%` for percentage ratios.
+- Include the relevant period or entity.
+- Keep the calculation traceable to retrieved data.
