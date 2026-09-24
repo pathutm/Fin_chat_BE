@@ -12,14 +12,19 @@ NON_MONETARY_TERMS = {
     "rate", "date", "month", "year", "day", "number", "status",
     "terms", "name", "type", "category", "uom", "measure",
     "diameter", "length", "pressure", "grade", "lot", "reason",
-    "currency", "match", "ratio"
+    "currency", "match", "ratio", "units", "delivered", "accepted",
+    "rejected", "scrap", "available", "received", "consumed",
+    "consumption", "produced", "production", "orders", "batches",
+    "lines", "records", "items", "variance_quantity", "weight",
+    "volume", "hours", "days", "score"
 }
 
 MONETARY_TERMS = {
-    "price", "cost", "amount", "value", "spend", "revenue",
+    "price", "cost", "amount", "spend", "revenue",
     "sales", "profit", "loss", "salary", "credit_limit",
     "subtotal", "freight", "discount", "tax", "budget",
-    "payable", "receivable", "total", "sum", "avg", "min", "max"
+    "payable", "receivable", "fee", "wage", "turnover",
+    "gross_margin", "ebit", "cash"
 }
 
 
@@ -27,6 +32,7 @@ def is_monetary_column(col_name: str) -> bool:
     """
     Deterministically determines if a database column or alias represents a monetary value.
     Non-monetary fields (quantities, counts, dates, IDs, percentages, ratios) return False.
+    Generic aggregation prefixes/suffixes (total, sum, avg) on non-monetary metrics return False.
     """
     if not col_name or not isinstance(col_name, str):
         return False
@@ -40,12 +46,12 @@ def is_monetary_column(col_name: str) -> bool:
     if name.endswith("_usd") or name.startswith("usd_"):
         return False
 
-    # Check for non-monetary keywords first (e.g. "ordered_quantity", "tax_rate", "variance_percent", "ratio")
+    # Check for non-monetary keywords first (e.g. "ordered_quantity", "total_delivered", "variance_quantity")
     for term in NON_MONETARY_TERMS:
         if term in name:
             return False
 
-    # Check for monetary keywords
+    # Check for true monetary keywords
     for term in MONETARY_TERMS:
         if term in name:
             return True
@@ -57,8 +63,7 @@ def _convert_row_monetary_values(row: dict, value_map: dict | None = None) -> di
     """
     Converts all monetary fields in a database row from INR to USD deterministically.
     Uses exact fixed conversion: USD = INR / 95.7.
-    Preserves original non-monetary fields and explicit non-INR currencies.
-    If value_map is provided, records raw -> converted mappings for safety.
+    Preserves original non-monetary fields (quantities, counts, dates, IDs) and explicit non-INR currencies.
     """
     if not isinstance(row, dict):
         return row
@@ -76,13 +81,6 @@ def _convert_row_monetary_values(row: dict, value_map: dict | None = None) -> di
                 num = float(cleaned)
                 usd_val = round(num / INR_PER_USD, 2)
                 new_row[k] = f"{usd_val:.2f}"
-                if value_map is not None:
-                    value_map[f"${num:,.2f}"] = f"${usd_val:,.2f}"
-                    value_map[f"${num:,.0f}"] = f"${usd_val:,.2f}"
-                    value_map[f"${cleaned}"] = f"${usd_val:,.2f}"
-                    value_map[f"₹{num:,.2f}"] = f"${usd_val:,.2f}"
-                    value_map[f"₹{num:,.0f}"] = f"${usd_val:,.2f}"
-                    value_map[f"₹{cleaned}"] = f"${usd_val:,.2f}"
             except (ValueError, TypeError):
                 new_row[k] = v
         else:

@@ -32,6 +32,12 @@ from agents.coordination_rules import (
     convert_tool_result_currency
 )
 
+from services.validation import (
+    validate_sql_query,
+    validate_tool_data,
+    validate_and_sanitize_response
+)
+
 from core.telemetry import (
     tracer,
     input_token_counter,
@@ -605,6 +611,17 @@ CURRENT AGENT INPUT:
 
                 try:
 
+                    query_val = validate_sql_query(query)
+                    if query_val.get("warnings"):
+                        print("\n[Data Validation Warnings]:")
+                        for w in query_val["warnings"]:
+                            print(f"  - {w}")
+                        if tool_span:
+                            tool_span.set_attribute(
+                                "validation.warnings",
+                                "; ".join(query_val["warnings"])
+                            )
+
                     result = await fetch_finance_data(
                         query
                     )
@@ -613,10 +630,8 @@ CURRENT AGENT INPUT:
                         result
                     )
 
-                    
                     tool_result = convert_tool_result_currency(
-                        tool_result,
-                        value_map=db_currency_map
+                        tool_result
                     )
 
                     tool_response = tool_result
@@ -943,12 +958,6 @@ CURRENT AGENT INPUT:
             "Sorry, I could not generate a response."
         )
 
-    import re
-    
-    if db_currency_map:
-        for raw_val_str, conv_val_str in db_currency_map.items():
-            final_response = final_response.replace(raw_val_str, conv_val_str)
-
     coordination_process = coordination_rule(
         question,
         result=final_response
@@ -958,6 +967,8 @@ CURRENT AGENT INPUT:
         "converted_result",
         final_response
     )
+
+    final_response = validate_and_sanitize_response(final_response)
 
     await create_process_log(
         user_name=user_name,
