@@ -1,3 +1,4 @@
+import re
 import httpx
 
 from mcp import ClientSession
@@ -26,23 +27,12 @@ async def fetch_finance_data(query: str):
             "SQL query cannot be empty"
         )
 
-    blocked_commands = [
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "DROP",
-        "ALTER",
-        "TRUNCATE",
-        "CREATE"
-    ]
-
-    query_upper = query.upper()
-
-    for command in blocked_commands:
-        if command in query_upper:
-            raise ValueError(
-                f"Blocked SQL operation: {command}"
-            )
+    blocked_pattern = r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE)\b'
+    match = re.search(blocked_pattern, query, re.IGNORECASE)
+    if match:
+        raise ValueError(
+            f"Blocked SQL operation: {match.group(1).upper()}"
+        )
 
     print("MCP → execute_sql")
 

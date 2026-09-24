@@ -48,6 +48,7 @@ cost_centre_allocation:
 - cost_centre_id
 - allocated_quantity
 - allocation_reason
+- allocation_driver
 
 customer:
 - customer_id
@@ -76,6 +77,7 @@ goods_receipt_note:
 - vendor_id
 - delivery_date
 - warehouse_id
+- plant_id
 
 goods_receipt_note_line:
 - grn_line_id
@@ -89,6 +91,22 @@ goods_receipt_note_line:
 - cumulative_accepted_quantity
 - remaining_po_quantity
 - batch_lot_number
+- plant_id
+- warehouse_id
+- unit_of_measure
+
+inventory_batch:
+- inventory_batch_id
+- grn_line_id
+- plant_id
+- warehouse_id
+- material_id
+- received_quantity
+- accepted_quantity
+- rejected_quantity
+- batch_date
+- available_quantity
+- unit_cost
 
 inventory_transaction:
 - transaction_id
@@ -102,6 +120,10 @@ inventory_transaction:
 - transfer_quantity
 - adjustment_quantity
 - closing_quantity
+- inventory_batch_id
+- plant_id
+- unit_cost
+- reference_document_id
 
 line_of_business:
 - lob_id
@@ -119,12 +141,28 @@ material_consumption:
 - actual_quantity
 - variance_quantity
 - variance_percent
+- inventory_batch_id
+- plant_id
 
 plant:
 - plant_id
 - plant_name
 - location
 - status
+- plant_code
+- plant_type
+- primary_capability
+- effective_from
+- effective_to
+
+plant_product_eligibility:
+- eligibility_id
+- plant_id
+- product_id
+- production_line_id
+- effective_from
+- effective_to
+- active_flag
 
 product:
 - product_id
@@ -139,6 +177,12 @@ product:
 - lob_id
 - standard_cost
 - active_status
+- material_family
+- nominal_diameter
+- wall_thickness
+- production_line_id
+- production_cost_centre_id
+- effective_from
 
 product_cost:
 - product_cost_id
@@ -154,6 +198,21 @@ product_cost:
 - actual_product_cost
 - cost_variance
 - cost_variance_percent
+- production_order_id
+- production_quantity
+- good_quantity
+- actual_unit_cost
+- standard_unit_cost
+
+production_line:
+- production_line_id
+- plant_id
+- line_code
+- line_name
+- production_capability
+- status
+- effective_from
+- effective_to
 
 production_order:
 - production_order_id
@@ -166,6 +225,11 @@ production_order:
 - actual_start_date
 - actual_end_date
 - production_status
+- production_line_id
+- planned_quantity
+- good_quantity
+- rejected_quantity
+- scrap_quantity
 
 purchase_order:
 - po_id
@@ -179,6 +243,7 @@ purchase_order:
 - plant_id
 - warehouse_id
 - po_status
+- pr_id
 
 purchase_order_line:
 - po_line_id
@@ -186,6 +251,30 @@ purchase_order_line:
 - product_id
 - ordered_quantity
 - unit_price
+- plant_id
+- unit_of_measure
+
+purchase_requisition:
+- pr_id
+- pr_date
+- requested_by
+- cost_centre_id
+- plant_id
+- material_id
+- requested_quantity
+- urgency_level
+- status
+
+raw_material_compatibility:
+- compatibility_id
+- material_id
+- material_name
+- material_family
+- product_family
+- application
+- product_type
+- plant_capability
+- bom_eligible
 
 reconciliation:
 - reconciliation_id
@@ -216,6 +305,9 @@ supplier_invoice:
 - invoice_amount
 - payment_due_date
 - payment_terms
+- payment_status
+- payment_date
+- paid_amount
 
 supplier_invoice_line:
 - invoice_line_id
@@ -226,6 +318,19 @@ supplier_invoice_line:
 - invoice_quantity
 - unit_price
 - line_amount
+
+supplier_payment:
+- payment_id
+- invoice_id
+- vendor_id
+- invoice_amount
+- due_date
+- payment_date
+- paid_amount
+- outstanding_amount
+- payment_status
+- days_late_early
+- payment_method
 
 vendor:
 - vendor_id
@@ -241,6 +346,9 @@ warehouse:
 - warehouse_name
 - location
 - status
+- plant_id
+- warehouse_code
+- warehouse_type
 """
 
 FINANCE_RELATIONSHIPS_PROMPT = """
@@ -248,7 +356,7 @@ IMPORTANT DATABASE RELATIONSHIPS
 
 Use the confirmed foreign-key relationships when joining tables.
 
-Product relationships:
+Product & Material relationships:
 - customer_order.product_id -> product.product_id
 - inventory_transaction.product_id -> product.product_id
 - product_cost.finished_product_id -> product.product_id
@@ -259,41 +367,68 @@ Product relationships:
 - material_consumption.raw_material_id -> product.product_id
 - bill_of_material.finished_product_id -> product.product_id
 - bill_of_material.raw_material_id -> product.product_id
+- purchase_requisition.material_id -> product.product_id
+- inventory_batch.material_id -> product.product_id
+- plant_product_eligibility.product_id -> product.product_id
+- raw_material_compatibility.material_id -> product.product_id
 
-Purchase relationships:
+Requisition & Purchase relationships:
+- purchase_order.pr_id -> purchase_requisition.pr_id
 - purchase_order_line.po_id -> purchase_order.po_id
 - goods_receipt_note.po_id -> purchase_order.po_id
 - reconciliation.po_id -> purchase_order.po_id
 - supplier_invoice.po_id -> purchase_order.po_id
 
-GRN relationships:
+GRN & Batch relationships:
 - goods_receipt_note_line.grn_id -> goods_receipt_note.grn_id
 - goods_receipt_note_line.po_line_id -> purchase_order_line.po_line_id
+- inventory_batch.grn_line_id -> goods_receipt_note_line.grn_line_id
+- cost_centre_allocation.grn_line_id -> goods_receipt_note_line.grn_line_id
 - supplier_invoice.grn_id -> goods_receipt_note.grn_id
 - reconciliation.grn_id -> goods_receipt_note.grn_id
 
-Invoice relationships:
+Invoice & Payment relationships:
 - supplier_invoice_line.invoice_id -> supplier_invoice.invoice_id
 - supplier_invoice_line.grn_line_id -> goods_receipt_note_line.grn_line_id
 - supplier_invoice_line.po_line_id -> purchase_order_line.po_line_id
+- supplier_invoice_line.product_id -> product.product_id
+- supplier_payment.invoice_id -> supplier_invoice.invoice_id
+- supplier_payment.vendor_id -> vendor.vendor_id
 - reconciliation.invoice_id -> supplier_invoice.invoice_id
+
+Production & Manufacturing relationships:
+- production_order.production_line_id -> production_line.production_line_id
+- product_cost.production_order_id -> production_order.production_order_id
+- material_consumption.production_order_id -> production_order.production_order_id
+- material_consumption.inventory_batch_id -> inventory_batch.inventory_batch_id
+- plant_product_eligibility.production_line_id -> production_line.production_line_id
 
 Vendor relationships:
 - purchase_order.vendor_id -> vendor.vendor_id
 - goods_receipt_note.vendor_id -> vendor.vendor_id
 - supplier_invoice.vendor_id -> vendor.vendor_id
+- supplier_payment.vendor_id -> vendor.vendor_id
 
-Warehouse relationships:
+Warehouse & Plant relationships:
 - purchase_order.warehouse_id -> warehouse.warehouse_id
-- goods_receipt_note.warehouse_id -> warehouse.warehouse_id
-- inventory_transaction.warehouse_id -> warehouse.warehouse_id
-
-Plant relationships:
 - purchase_order.plant_id -> plant.plant_id
+- goods_receipt_note.warehouse_id -> warehouse.warehouse_id
+- goods_receipt_note.plant_id -> plant.plant_id
+- goods_receipt_note_line.warehouse_id -> warehouse.warehouse_id
+- goods_receipt_note_line.plant_id -> plant.plant_id
+- inventory_transaction.warehouse_id -> warehouse.warehouse_id
+- inventory_transaction.plant_id -> plant.plant_id
+- inventory_batch.warehouse_id -> warehouse.warehouse_id
+- inventory_batch.plant_id -> plant.plant_id
+- production_line.plant_id -> plant.plant_id
+- plant_product_eligibility.plant_id -> plant.plant_id
 - production_order.plant_id -> plant.plant_id
+- purchase_requisition.plant_id -> plant.plant_id
+- warehouse.plant_id -> plant.plant_id
 
 Cost centre relationships:
 - purchase_order.cost_centre_id -> cost_centre.cost_centre_id
+- purchase_requisition.cost_centre_id -> cost_centre.cost_centre_id
 - production_order.production_cost_centre_id -> cost_centre.cost_centre_id
 - material_consumption.cost_centre_id -> cost_centre.cost_centre_id
 - cost_centre_allocation.cost_centre_id -> cost_centre.cost_centre_id
@@ -326,6 +461,16 @@ For purchase order amounts:
 For invoice analysis:
 - Use supplier_invoice.invoice_amount for invoice-level amount.
 - Use supplier_invoice_line.line_amount for invoice-line amount.
+
+For supplier payment and financial exposure analysis:
+- Total Outstanding Amount is the sum of supplier_payment.outstanding_amount across ALL categories (Paid ($0), Overdue ($202.47M), Partially Paid ($92.19M), On Hold ($101.03M), and Scheduled ($101.80M)) = $497,495,271.38. Always include all status categories when reporting total exposure.
+- In supplier_payment, invoice counts by payment_status are: Paid (8,244), Overdue (372), Partially Paid (372 total, with 295 late/overdue and 77 on-time), On Hold (186), Scheduled (186). Total = 9,360 invoices.
+- Use supplier_payment.paid_amount for cash disbursements / payments made ($4,483,341,727.37).
+- Use supplier_payment.days_late_early and supplier_payment.payment_status for payment timeliness.
+
+For purchase requisition, purchase order and vendor joins:
+- Join: purchase_order po JOIN vendor v ON po.vendor_id = v.vendor_id LEFT JOIN purchase_requisition pr ON po.pr_id = pr.pr_id.
+- When querying PR, PO, and Vendor details alongside line-item sums, pre-aggregate lines using CTEs or subqueries (e.g. WITH po_spend AS (SELECT po_id, SUM(ordered_quantity * unit_price) as po_amount FROM purchase_order_line GROUP BY po_id)) or ensure every non-aggregated column in SELECT appears in GROUP BY to avoid SQL aggregate errors.
 
 For product analysis:
 - Resolve the product using product.product_id or product.product_name.
