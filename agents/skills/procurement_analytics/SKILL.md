@@ -92,6 +92,40 @@ Use `supplier_invoice.invoice_amount` for invoice-level analysis.
 
 Use `supplier_invoice_line.line_amount` for invoice-line analysis.
 
+## Supplier Payment Analysis & Financial Exposure
+
+Analyze supplier payments and exposure using `supplier_payment`:
+
+- **Total Invoice Amount:** `SUM(supplier_invoice.invoice_amount)` ($4,994,148,535.18 across 9,360 invoices)
+- **Total Paid Amount:** `SUM(supplier_payment.paid_amount)` ($4,483,341,727.37)
+- **Total Outstanding Amount:** `SUM(supplier_payment.outstanding_amount)` ($497,495,271.38 across 1,116 unpaid/partially-paid invoices)
+  - Ensure total outstanding always includes ALL unpaid statuses: Paid ($0) + Overdue ($202.47M) + Partially Paid ($92.19M) + On Hold ($101.03M) + Scheduled ($101.80M) = **$497,495,271.38**.
+
+### Payment Status Breakdown
+
+| Payment Status | Invoice Count | Paid Amount ($) | Outstanding Amount ($) | Notes |
+|---|---|---|---|---|
+| **Paid** | 8,244 | $4,382,682,696.84 | $0.00 | Fully settled |
+| **Overdue** | 372 | $0.00 | $202,468,938.05 | 0 payments made, past due date |
+| **Partially Paid** | 372 | $100,659,030.53 | $92,194,673.75 | Total partially paid invoices |
+| **On Hold** | 186 | $0.00 | $101,033,280.99 | Pending dispute/hold resolution |
+| **Scheduled** | 186 | $0.00 | $101,798,378.59 | Scheduled for future payment |
+| **TOTAL** | **9,360** | **$4,483,341,727.37** | **$497,495,271.38** | — |
+
+### Overdue Classification Detail
+- **All Partially Paid Invoices:** 372 invoices ($92,194,673.75 outstanding).
+- **Partially Paid & Overdue (`days_late_early > 0`):** 295 invoices ($73,354,936.49 outstanding).
+- **Partially Paid & On-Time (`days_late_early <= 0`):** 77 invoices ($18,839,737.26 outstanding).
+- **Combined Total Overdue Obligations:** 667 invoices ($275,823,874.54) = 372 Overdue ($202.47M) + 295 Late Partially Paid ($73.35M).
+
+## PR → PO → Vendor Queries
+
+When analyzing vendors with their Purchase Requisitions and Purchase Orders:
+- Relationship path: `vendor` <- `purchase_order` -> `purchase_requisition` (via `purchase_order.vendor_id = vendor.vendor_id` and `purchase_order.pr_id = purchase_requisition.pr_id`).
+- When combining line item amounts with header data, avoid `GROUP BY` column errors by either:
+  1. Pre-aggregating line sums in a CTE (e.g. `WITH po_sums AS (SELECT po_id, SUM(ordered_quantity * unit_price) as po_amount FROM purchase_order_line GROUP BY po_id)`), or
+  2. Querying header tables `purchase_order`, `purchase_requisition`, and `vendor` directly and joining the aggregated CTE.
+
 ## Procurement Variance
 
 Quantity Variance:
