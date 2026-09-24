@@ -27,7 +27,10 @@ from services.logging import (
     create_process_log
 )
 
-from agents.coordination_rules import coordination_rule
+from agents.coordination_rules import (
+    coordination_rule,
+    convert_tool_result_currency
+)
 
 from core.telemetry import (
     tracer,
@@ -245,6 +248,7 @@ CURRENT AGENT INPUT:
     tool_id = None
 
     pending_model_usage = {}
+    db_currency_map = {}
 
     coordination_span = tracer.start_span(
         "chat.coordination_agent"
@@ -599,6 +603,12 @@ CURRENT AGENT INPUT:
                         result
                     )
 
+                    
+                    tool_result = convert_tool_result_currency(
+                        tool_result,
+                        value_map=db_currency_map
+                    )
+
                     tool_response = tool_result
 
                     print(
@@ -923,10 +933,12 @@ CURRENT AGENT INPUT:
             "Sorry, I could not generate a response."
         )
 
-    # -------------------------------------------------
-    # FINAL RESPONSE CURRENCY ENFORCEMENT
-    # -------------------------------------------------
     import re
+    
+    if db_currency_map:
+        for raw_val_str, conv_val_str in db_currency_map.items():
+            final_response = final_response.replace(raw_val_str, conv_val_str)
+
     coordination_process = coordination_rule(
         question,
         result=final_response
@@ -936,11 +948,6 @@ CURRENT AGENT INPUT:
         "converted_result",
         final_response
     )
-
-    # Ensure absolute replacement of any lingering ₹ or INR or Rs
-    final_response = re.sub(r'₹\s*', '$', final_response)
-    final_response = re.sub(r'\bINR\s*', '$', final_response)
-    final_response = re.sub(r'\bRs\.?\s*', '$', final_response)
 
     await create_process_log(
         user_name=user_name,
