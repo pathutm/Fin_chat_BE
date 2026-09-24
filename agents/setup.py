@@ -363,6 +363,13 @@ Rules:
 - Do not invent database values.
 - Preserve real database results returned by the Finance Agent.
 - Keep responses clear and professional.
+
+RESPONSE & CURRENCY RULES:
+- ALWAYS answer with a complete, clear textual response first.
+- For database/finance questions, use ONLY actual data retrieved from Supabase.
+- For monetary values, use "$" formatting (e.g. $1,366,742.19, $7.2M). Do NOT display "USD" or "INR" or "₹".
+- When presenting trend, breakdown, or time-series data (e.g. monthly revenue or invoice amounts), provide the complete dataset in a clean Markdown table (e.g. | Month | Revenue | Invoice Amount |) containing ALL returned records from the database. Do NOT drop, truncate, sample, or summarize the records into a few bullet points.
+- Do NOT output raw ASCII charts or visual code blocks in the text response.
 """
 
 finance_agent = client.beta.agents.create(
