@@ -11,12 +11,13 @@ Apply standard financial ratios when the required financial data is available.
 
 ## Core Rules
 
+- **Validated Backend Value > LLM Recomputation**: Prefer existing database calculation and ratio fields (such as `cost_variance_percent`, `variance_percent`) when available. Do not independently recalculate when authoritative fields provide the metric.
 - Use only retrieved database values or user-provided values.
 - Do not invent missing values.
+- **No Invented Benchmarks**: Never compare calculated ratios to fabricated "industry averages", "market standards", or "typical targets" unless explicitly provided by the user or database.
 - Use consistent periods and units.
 - Round ratios and percentages to 2 decimal places.
-- If the denominator is zero, do not calculate the ratio.
-- Prefer existing database fields when they directly provide the requested metric.
+- If the denominator is zero, do not calculate the ratio. State that the ratio cannot be calculated.
 
 ## Profit Margin
 

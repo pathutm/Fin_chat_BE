@@ -14,7 +14,10 @@ Provide consistent comparisons between entities, periods, and financial metrics.
 - Use only retrieved database values or user-provided values.
 - Compare the same metric across the same measurement basis.
 - Use consistent units and time periods.
-- Do not invent missing values.
+- Do not invent missing values or external benchmarks.
+- **No Invented Industry Benchmarks**: Never introduce or compare against unverified "industry benchmarks", "market standards", or "typical industry rates" unless explicitly provided by the user or database.
+- **No Conflating Differences with Savings**: A price or cost difference between two entities or periods is a variance, NOT "savings" unless explicitly categorized as realized savings by business rules.
+- **No Speculative Conclusions**: Do not label one entity as "overcharging" or "inefficient" simply because their cost or price is higher; report the factual numbers only.
 - Do not assume missing values are zero.
 - Keep comparisons factual and data-driven.
 

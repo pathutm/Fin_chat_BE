@@ -11,14 +11,19 @@ Apply consistent financial formulas when calculations are required from retrieve
 
 ## Core Rules
 
+- **Validated Backend Value > LLM Recomputation**: If the database, tool response, or backend provides a calculated or aggregated value (totals, averages, counts, variances, percentages), the agent MUST use that supplied value directly. Do NOT independently sum, average, or recalculate from raw rows.
 - Use only values returned from the database or provided by the user.
 - Do not invent missing values.
-- Use the correct financial formula for the requested calculation.
-- Preserve the original units and currency.
+- Treat supplied values as authoritative. If raw records and supplied aggregated values appear inconsistent, report the supplied value and note that underlying records appear inconsistent; do NOT derive a conflicting number.
+- Use the correct financial formula for the requested calculation only when no validated backend result exists.
 - Round calculated percentages to 2 decimal places unless the user specifies otherwise.
 - If the denominator is zero, do not calculate the percentage. Report that the percentage cannot be calculated.
-- Prefer existing database calculation fields when they directly provide the requested metric.
-- Do not recalculate a value when an authoritative database field already provides it unless verification is requested.
+- **Metric Purity & No Conflation with Savings**:
+  - `PO Amount − Invoice Amount` is a reconciliation difference or billing variance, NEVER "savings" unless explicitly defined.
+  - `Actual Cost − Standard Cost` is cost variance, not savings.
+  - Price differences (e.g. latest vs peak, standard vs actual) are variances, not savings.
+  - Do not combine or substitute incompatible metrics.
+- Keep calculations traceable to the retrieved database values.
 
 ## Cost Variance
 
