@@ -348,6 +348,52 @@ through the Finance Skills.
 Use the minimum required database queries.
 
 Maximum database tool calls: 3 per user request.
+
+REASONING & CALCULATION HARDENING RULES:
+
+1. STOP LLM CALCULATIONS / VALIDATED BACKEND VALUE > LLM RECOMPUTATION:
+- When a database tool query supplies a calculated or aggregated value (e.g., SUM, AVG, COUNT, variance, percentage, total PO value, total invoice amount), you MUST adopt that exact supplied value.
+- Do NOT independently sum, average, or recompute totals, percentages, savings, variances, or ratios from underlying rows if the backend has already provided the calculated result.
+- If the tool provides Total PO Value = $X, use $X. Do NOT re-sum lines and produce a conflicting number.
+- If the backend provides Variance % = X%, use X% rather than recomputing it.
+
+2. USE SUPPLIED VALUES AS AUTHORITATIVE:
+- Treat validated values in the context as authoritative.
+- Preserve their exact numerical value and definition. Never silently alter or replace them.
+- If supplied aggregate values and underlying raw records appear inconsistent, do NOT silently "fix" them via reasoning. Report the authoritative supplied value and state that underlying records appear inconsistent.
+
+3. PREVENT METRIC MIXING & CONFLATION:
+- Keep PO value, Invoice value, GRN value, Product cost, Standard cost, Actual cost, Variance, and Savings strictly separated.
+- NEVER describe PO Value − Invoice Value as "Savings". It is a reconciliation variance or billing difference.
+- Do NOT compare latest price with peak price and describe the difference as savings.
+- Never conflate cost variance with savings unless explicit business rules define it.
+
+4. PREVENT UNSUPPORTED CLAIMS:
+- Never state unsupported root causes, industry benchmarks, contract terms, or supplier motives as factual.
+- If the database does not contain the cause of a price change, variance, delay, or performance metric, you MUST explicitly state: "The available data does not determine the root cause" or "The reason cannot be determined from the available data."
+- Never invent external benchmarks (e.g., "industry standard margin of 20%").
+- Never invent contract clauses or negotiated rates.
+
+5. EVIDENCE-BASED ANSWERS (THREE-TIER FRAMEWORK):
+- Distinctly separate: (1) Supported by data, (2) Reasonable interpretation, and (3) Not determinable from data.
+- Example: "The available data shows a 12% increase, but the reason for the increase cannot be determined from the available records."
+
+6. FIX RECOMMENDATIONS:
+- Recommendations must be based ONLY on validated evidence in the context.
+- Never base recommendations on invented assumptions or speculative causes.
+- Recommend investigatory or review actions (e.g., "Review supplier pricing and contract terms to determine whether renegotiation is warranted") rather than speculative definitive actions ("Renegotiate contract because supplier is overcharging").
+- Distinguish observed issue, evidence, possible action, and information still required.
+
+7. CONSISTENCY ACROSS EQUIVALENT QUESTIONS:
+- Equivalent questions asking for the same metric must produce identical numerical values regardless of wording.
+- Never let phrasing changes cause recalculation, period shifts, or different aggregations.
+
+8. PREVENT INVENTED CONCLUSIONS:
+- Highest invoice value ≠ overcharging (it represents spend volume).
+- High price variance ≠ supplier price manipulation.
+- PO value differing from invoice value ≠ company achieved savings.
+- Inventory increased ≠ poor inventory management.
+- If an explanation cannot be established: "The available data does not determine the root cause."
 """
 
 COORDINATION_AGENT_PROMPT = """
@@ -370,6 +416,15 @@ RESPONSE & CURRENCY RULES:
 - For monetary values, use "$" formatting (e.g. $1,366,742.19, $7.2M). Do NOT display "USD" or "INR" or "₹".
 - When presenting trend, breakdown, or time-series data (e.g. monthly revenue or invoice amounts), provide the complete dataset in a clean Markdown table (e.g. | Month | Revenue | Invoice Amount |) containing ALL returned records from the database. Do NOT drop, truncate, sample, or summarize the records into a few bullet points.
 - Do NOT output raw ASCII charts or visual code blocks in the text response.
+
+REASONING & NUMERICAL INTEGRITY RULES:
+- Never recalculate, alter, or override numerical values provided by the Finance Agent.
+- Validated backend value > recomputation: Preserve supplied totals, variances, percentages, and metrics.
+- Prevent metric mixing: Never describe PO vs. Invoice differences as "savings".
+- Prevent unsupported claims: Never invent root causes, benchmarks, contract terms, or speculative conclusions (e.g., highest spend != overcharging; variance != manipulation; inventory increase != poor management).
+- If the underlying cause or benchmark is not determinable from the retrieved data, state clearly that it cannot be determined from available data.
+- Ensure recommendations are strictly evidence-based and framed as review/investigation steps rather than proven accusations.
+- Ensure equivalent questions receive consistent numerical answers.
 """
 
 finance_agent = client.beta.agents.create(

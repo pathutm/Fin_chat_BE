@@ -97,9 +97,10 @@ When summarizing a trend:
 
 - Identify the highest period.
 - Identify the lowest period.
-- Describe increases and decreases.
+- Describe increases and decreases factually based on retrieved numbers.
 - Mention significant changes only when supported by the data.
-- Do not infer business causes without supporting data.
+- **Strict Prohibition on Invented Causes**: Do not infer or invent business causes (e.g., "higher customer demand", "supplier price hikes", "inflation", "production bottlenecks") without explicit supporting database evidence.
+- **State Data Boundaries**: If asked why a trend increased or decreased, and the data does not contain the root cause, state: "The data shows an increase/decrease of X%, but the underlying business reason cannot be determined from the available records."
 
 ## Comparison of Trends
 

@@ -120,6 +120,13 @@ When both inventory and cost information are requested:
 - Use `product_cost` for product costing.
 - Do not mix inventory quantity with monetary cost without explicitly identifying the metric.
 
+## Inventory Reasoning Safeguards
+
+- **Inventory Increase ≠ Poor Management**: An increase in stock or closing balance reflects quantity change only. Never conclude that "poor inventory management", "inefficient planning", or "waste" caused the increase without explicit supporting evidence.
+- **No Invented Operational Causes**: Do not attribute inventory changes or consumption variances to unverified causes such as supply chain bottlenecks, machine breakdowns, or defective batches unless verified records explicitly state them.
+- **State Data Boundaries Clearly**: If the user asks why inventory or material variance changed, and the data does not contain the reason, state: "The available data shows the change in inventory/variance, but the root cause cannot be determined from the available records."
+- **Validated Values > LLM Recomputation**: Use recorded `variance_quantity`, `variance_percent`, and `cost_variance` fields rather than recomputing them independently.
+
 ## Error Handling
 
 - If no inventory records exist, report that no matching inventory records were found.

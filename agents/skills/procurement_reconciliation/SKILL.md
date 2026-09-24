@@ -77,24 +77,33 @@ Use `supplier_invoice.invoice_amount` for invoice-level amount.
 
 Use `supplier_invoice_line.line_amount` for invoice-line amount.
 
-## PO vs Invoice Comparison
-
-Compare:
-
-- PO Quantity
-- Invoice Quantity
-- PO Unit Price
-- Invoice Unit Price
-
-Quantity Difference:
-
-`PO Quantity − Invoice Quantity`
-
-Unit Price Difference:
-
-`Invoice Unit Price − PO Unit Price`
-
-Do not treat differences as errors unless the data or user request supports that interpretation.
+## PO vs Invoice Comparison & Metric Integrity
+ 
+ Compare:
+ 
+ - PO Quantity
+ - Invoice Quantity
+ - PO Unit Price
+ - Invoice Unit Price
+ - PO Amount vs. Invoice Amount
+ 
+ Quantity Difference:
+ 
+ `PO Quantity − Invoice Quantity`
+ 
+ Unit Price Difference:
+ 
+ `Invoice Unit Price − PO Unit Price`
+ 
+ Amount Difference:
+ 
+ `PO Amount − Invoice Amount`
+ 
+ ### Critical Reconciliation Safeguards:
+ - **Amount Difference is NOT Savings**: Never label `PO Amount − Invoice Amount` as "savings". It is a billing difference or reconciliation variance.
+ - **Mismatches are Not Fraud or Overcharging**: A mismatch in quantity or price does NOT automatically imply supplier manipulation, fraud, or overcharging.
+ - **No Invented Root Causes**: If the underlying cause of a mismatch or failed reconciliation is not documented in the database, explicitly state: "The available data shows the mismatch, but the underlying reason cannot be determined from the available records."
+ - Do not treat differences as errors unless the data or user request supports that interpretation.
 
 ## Three-Way Matching
 

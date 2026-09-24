@@ -148,18 +148,24 @@ When comparing suppliers:
 - Preserve equal values as ties.
 - Do not combine unrelated metrics into a single ranking.
 
-## Procurement Risk Indicators
-
-Identify data-supported indicators such as:
-
-- High rejected quantities
-- Large PO-to-invoice quantity differences
-- Unit price mismatches
-- Failed reconciliations
-- Overdue purchase orders
-- High procurement cost variance
-
-Do not label a supplier or transaction as risky unless the retrieved data supports the conclusion.
+## Procurement Risk Indicators & Reasoning Safeguards
+ 
+ Identify data-supported indicators such as:
+ 
+ - High rejected quantities
+ - Large PO-to-invoice quantity differences
+ - Unit price mismatches
+ - Failed reconciliations
+ - Overdue purchase orders
+ - High procurement cost variance
+ 
+ ### Critical Procurement Reasoning Rules:
+ - **Highest Invoice Value ≠ Overcharging**: A vendor with the highest invoice amount simply represents the highest spend or purchase volume. Never conclude or claim that the vendor is "overcharging", "expensive", or "gouging" without explicit comparative unit-cost evidence.
+ - **Price Variance ≠ Manipulation**: Significant price variance across orders or items indicates price volatility; do NOT conclude that the supplier is "manipulating prices" or "violating terms".
+ - **No Invented Contract Terms or Benchmarks**: Never claim that prices violate "contract terms", "negotiated rates", or "industry benchmarks" unless those specific terms or benchmarks are present in the retrieved database data.
+ - **No Invented Root Causes**: If reasons for price increases, delivery delays, or variances are not in the database, explicitly state: "The reason cannot be determined from the available data."
+ - **Evidence-Grounded Recommendations**: Recommend investigative reviews rather than speculative actions. State: "Review supplier pricing and contract terms to determine whether renegotiation is warranted" rather than assuming contracts need renegotiation due to unproven overcharging.
+ - Do not label a supplier or transaction as risky unless the retrieved data supports the conclusion.
 
 ## Error Handling
 
