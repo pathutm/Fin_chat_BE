@@ -1,6 +1,6 @@
 ---
 name: inventory-costing
-description: Defines inventory costing, stock movement, material usage, and inventory variance analysis methods.
+description: Use when analyzing inventory positions, stock movements (receipts, consumption, transfers, adjustments), closing balances, material usage, batch tracking, and inventory cost structures.
 ---
 
 # Inventory Costing Skill

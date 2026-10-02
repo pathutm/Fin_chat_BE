@@ -1,6 +1,6 @@
 ---
 name: financial-ratios
-description: Defines standard financial ratio calculations for profitability, cost, efficiency, liquidity, and performance analysis.
+description: Use when calculating and interpreting financial ratios including profit margin, cost variance percentage, quantity variance percentage, fulfillment rates, acceptance/rejection rates, or cost component breakdown.
 ---
 
 # Financial Ratios Skill

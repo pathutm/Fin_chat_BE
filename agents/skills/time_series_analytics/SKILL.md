@@ -1,6 +1,6 @@
 ---
 name: time-series-analytics
-description: Defines methods for analyzing financial, procurement, inventory, production, and invoice trends over time.
+description: Use when analyzing time-series trends, monthly/quarterly/yearly chronological data, period-over-period changes, moving averages, or historical spend/revenue patterns.
 ---
 
 # Time Series Analytics Skill

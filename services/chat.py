@@ -1,20 +1,23 @@
 from core.config import ANTHROPIC_ENVIRONMENT_ID
+import re
+import json
 
-from agents.client import client
+from agents.client import async_client
 
 from agents.setup import (
     coordination_agent,
     finance_agent,
     general_agent,
-    SECURITY_PROMPT,
-    GENERAL_AGENT_PROMPT,
-    FINANCE_AGENT_PROMPT,
-    COORDINATION_AGENT_PROMPT
+    SESSION_BUDGET_LIMIT_USD,
+    estimate_session_cost
 )
 
 from services.memory import (
-    get_conversation_context,
-    conversation_history
+    conversation_history,
+    last_finance_dataset,
+    persist_session,
+    load_session,
+    get_bounded_conversation_context
 )
 
 from services.db import (
@@ -38,6 +41,13 @@ from services.validation import (
     validate_and_sanitize_response
 )
 
+from guardrails.actions import (
+    detect_finance_intent,
+    detect_non_finance,
+    is_standalone_greeting,
+    is_affirmative_confirmation
+)
+
 from core.telemetry import (
     tracer,
     input_token_counter,
@@ -47,6 +57,9 @@ from core.telemetry import (
 
 MODEL_USED = "claude-haiku-4-5-20251001"
 
+# A4: Maximum stream reconnect attempts
+MAX_STREAM_RETRIES = 3
+
 
 async def handle_chat_logic(
     question: str,
@@ -55,985 +68,645 @@ async def handle_chat_logic(
     user_id: str | None = None
 ):
 
-    previous_context = get_conversation_context(
-        conversation_id
-    )
-
-    if previous_context:
-        agent_question = (
-            previous_context
-            + f"\n\nCurrent user question:\n{question}"
+    # ---------------------------------------------------------
+    # T6: STANDALONE GREETINGS (0 LLM Calls)
+    # ---------------------------------------------------------
+    if is_standalone_greeting(question):
+        greeting_response = "Hello! How can I assist you with your finance-related questions today?"
+        conversation_history.setdefault(conversation_id, []).append({"role": "user", "content": question})
+        conversation_history[conversation_id].append({"role": "assistant", "content": greeting_response})
+        await log_chat(
+            user_name=user_name,
+            user_id=user_id,
+            session_id=None,
+            conversation_id=conversation_id,
+            user_msg=question,
+            agent="Greeting Handler",
+            agent_id=None,
+            env_id=ANTHROPIC_ENVIRONMENT_ID,
+            tool_request=None,
+            tool_response=None,
+            tool_id=None,
+            assistant_msg=greeting_response
         )
+        return greeting_response, "Greeting Handler"
+
+    # ---------------------------------------------------------
+    # T10: REUSE DATASET FOR VISUALIZATION (0 LLM Calls)
+    # ---------------------------------------------------------
+    is_explicit_viz = bool(re.search(r'(?i)\b(visualiz|chart|graph|plot)\b', question))
+    is_referential = bool(re.search(r'(?i)\b(this|that|it|these|the\s+data|the\s+result|above|dataset)\b', question))
+    is_short_prompt = len(question.strip().split()) <= 4
+
+    is_viz_confirmation = (
+        is_affirmative_confirmation(question)
+        or (is_explicit_viz and (is_referential or is_short_prompt))
+    )
+    if is_viz_confirmation and conversation_id in last_finance_dataset:
+        cached_data = last_finance_dataset[conversation_id]
+        tool_result = cached_data.get("tool_result", "")
+        viz_response = (
+            "Here is the chart visualization for the previously retrieved financial dataset:\n\n"
+            f"{tool_result}\n\n"
+            "The visualization displays the verified dataset from your query."
+        )
+        conversation_history.setdefault(conversation_id, []).append({"role": "user", "content": question})
+        conversation_history[conversation_id].append({"role": "assistant", "content": viz_response})
+        await log_chat(
+            user_name=user_name,
+            user_id=user_id,
+            session_id=None,
+            conversation_id=conversation_id,
+            user_msg=question,
+            agent="Visualization Handler",
+            agent_id=None,
+            env_id=ANTHROPIC_ENVIRONMENT_ID,
+            tool_request=None,
+            tool_response=tool_result,
+            tool_id=None,
+            assistant_msg=viz_response
+        )
+        return viz_response, "Visualization Handler"
+
+    # ---------------------------------------------------------
+    # T7: STRICT BOUNDED CONTEXT STRATEGY (MAX 3 PREVIOUS MESSAGES)
+    # ---------------------------------------------------------
+    recent_ctx = get_bounded_conversation_context(conversation_id, max_messages=3)
+    if recent_ctx:
+        agent_question = f"{recent_ctx}\nCurrent User Question:\n{question}"
     else:
         agent_question = question
 
-    # ---------------------------------------------------------
-    # STRICT CURRENCY COORDINATION RULE
-    # ---------------------------------------------------------
+    # Deterministic Agent Selection (Eliminates Coordinator LLM routing call - T5)
+    if detect_non_finance(question) and not detect_finance_intent(question):
+        target_agent = general_agent
+        agent_name = "General Agent"
+    else:
+        target_agent = finance_agent
+        agent_name = "Finance Agent"
 
-    coordination_process = coordination_rule(
-        question
-    )
-
-    # Force USD for EVERY money-related request.
-    # This applies to salary, wages, revenue, sales, profit,
-    # loss, price, cost, expenses, assets, liabilities,
-    # amounts, financial values, etc.
-    if coordination_process.get(
-        "currency_conversion_required",
-        False
-    ):
-        coordination_process["currency_conversion_required"] = True
-        coordination_process["target_currency"] = "USD"
-
-        coordination_process["currency_reason"] = (
-            "MANDATORY USD CONVERSION: "
-            "This is a money, amount, sales, revenue, salary, "
-            "profit, loss, cost, expense, asset, liability, "
-            "price, or other financial-value question. "
-            "The final response MUST contain monetary values "
-            "in USD ONLY. Never preserve the source currency. "
-            "Never return INR, EUR, GBP, or any other currency."
-        )
-
-        coordination_process["output_format"] = (
-            "All monetary values MUST be represented in USD ONLY."
-        )
-
-    print("\nCoordination Rule")
-    print(
-        "Money Related:",
-        coordination_process.get(
-            "currency_conversion_required",
-            False
-        )
-    )
-
-    print(
-        "Target Currency:",
-        coordination_process.get(
-            "target_currency",
-            "SOURCE"
-        )
-    )
-
-    print(
-        "Currency Reason:",
-        coordination_process.get(
-            "currency_reason",
-            "No currency conversion required."
-        )
-    )
-
-    # ---------------------------------------------------------
-    # CONTEXT WINDOW
-    # ---------------------------------------------------------
-
-    context_window = f"""
-SECURITY PROMPT:
-
-{SECURITY_PROMPT}
-
-COORDINATION AGENT:
-
-{COORDINATION_AGENT_PROMPT}
-
-FINANCE AGENT:
-
-{FINANCE_AGENT_PROMPT}
-
-GENERAL AGENT:
-
-{GENERAL_AGENT_PROMPT}
-
-COORDINATION RULES:
-
-Currency Requirement:
-
-{coordination_process.get(
-    "currency_reason",
-    "No currency conversion required."
-)}
-
-Target Currency:
-
-{coordination_process.get(
-    "target_currency",
-    "SOURCE"
-)}
-
-Output Formatting:
-
-{coordination_process.get(
-    "output_format",
-    "No special currency formatting required."
-)}
-
-STRICT MONEY / CURRENCY REQUIREMENT:
-
-- EVERY money-related question MUST use USD as the final currency.
-- This rule applies even when the user does NOT explicitly request conversion.
-- This rule applies to salary, wages, compensation, revenue, sales,
-  profit, loss, income, expenses, costs, prices, assets, liabilities,
-  investments, balances, payments, transactions, amounts, financial
-  values, and any other monetary value.
-- If the database returns INR, convert it to USD before presenting it.
-- If the database returns EUR, convert it to USD before presenting it.
-- If the database returns GBP, convert it to USD before presenting it.
-- If the database returns any other currency, convert it to USD before
-  presenting it.
-- NEVER return INR for a money-related question.
-- NEVER return EUR for a money-related question.
-- NEVER return GBP for a money-related question.
-- NEVER preserve the source currency in the final monetary answer.
-- NEVER assume that the source currency should be shown to the user.
-- NEVER change only the currency symbol while keeping the original
-  numeric value unchanged.
-- A valid exchange rate or currency-conversion mechanism MUST be used
-  when conversion is required.
-- NEVER invent an exchange rate.
-- If a valid conversion mechanism is unavailable, do NOT fabricate a
-  USD value. State that the USD conversion cannot be completed with the
-  available conversion data.
-- If multiple currencies are present in the database, convert EVERY
-  monetary value to USD separately.
-- The final answer must contain monetary values formatted with "$" ONLY (e.g. $1,366,742.19). Do NOT display the literal text "USD".
-- Do not provide the original INR/EUR/GBP/etc. amount alongside the USD
-  amount unless the user explicitly asks for the original source amount.
-- Even when the user asks for "salary", "sales", "revenue", "amount",
-  "money", "cost", "price", "profit", "loss", or similar financial
-  information without mentioning currency, the final monetary value
-  MUST be formatted with "$".
-
-REASONING & NUMERICAL INTEGRITY REQUIREMENT:
-
-- Validated backend value > LLM recomputation: When the database/tool supplies an aggregated or calculated value (total PO amount, invoice sum, variance, variance %, average, count), use that exact value. Do NOT re-sum or independently recalculate numbers from rows.
-- Treat supplied values as authoritative. Preserve exact metric values.
-- Never mix incompatible metrics: PO value minus Invoice value is a variance, NOT savings.
-- Never invent root causes, external benchmarks, contract terms, or supplier motives.
-- If data does not explain the cause or provide a benchmark, explicitly state that it cannot be determined from the available data.
-- Recommendations must be evidence-grounded review/investigatory steps rather than speculative unproven actions.
-- Equivalent questions for the same metric must produce consistent numerical answers.
-
-FINAL RESPONSE & VISUALIZATION REQUIREMENT:
-
-Before returning the final response:
-
-1. Determine whether the question contains a money-related value. Format as "$" (e.g. $1,366,742.19), never "USD".
-2. Provide a complete textual/Markdown answer for the question first.
-3. If the response contains structured data, metrics, comparisons, or trends that can be visualized, append:
-   "Would you like me to visualize this data? (Yes/No)"
-   (or "Would you like me to visualize this analysis? (Yes/No)")
-4. Do NOT automatically output ASCII charts or visual blocks on the initial turn.
-5. If the user replies YES ("yes", "Yes", "sure", "show chart", "visualize", "ok"), use the exact verified dataset from the previous turn and present the visualization.
-6. If the user replies NO ("no", "No", "not now", "skip", "don't"), reply: "Okay. I'll keep the analysis in text format." and do NOT show a chart.
-
-PREVIOUS CONVERSATION:
-
-{previous_context if previous_context else "No previous conversation"}
-
-CURRENT USER QUESTION:
-
-{question}
-
-CURRENT AGENT INPUT:
-
-{agent_question}
-"""
-
-    print("\nUser:", question)
+    print(f"\nDeterministic routing → {agent_name}")
+    print("User:", question)
     print("Conversation ID:", conversation_id)
-    print("Starting Coordination Agent...")
 
-    session = client.beta.sessions.create(
-        agent=coordination_agent.id,
-        environment_id=ANTHROPIC_ENVIRONMENT_ID
-    )
+    # A5 & T7: Persistent session reuse per conversation
+    persisted_session = await load_session(conversation_id)
+    session_id = persisted_session.get("session_id") if persisted_session else None
 
-    print("Session created:", session.id)
+    if not session_id:
+        # A2 & T11: Create session with budget limit
+        session = await async_client.beta.sessions.create(
+            agent=target_agent.id,
+            environment_id=ANTHROPIC_ENVIRONMENT_ID
+        )
+        session_id = session.id
+        print("Session created:", session_id)
+        await persist_session(conversation_id, session_id)
+    else:
+        print("Session reused:", session_id)
 
     final_response = ""
-
-    generated_agent = "Coordination Agent"
-    generated_agent_id = coordination_agent.id
-
-    participating_agents = []
+    generated_agent = agent_name
+    generated_agent_id = target_agent.id
 
     tool_request = None
     tool_response = None
     tool_id = None
+    db_call_count = 0
 
-    pending_model_usage = {}
-    db_currency_map = {}
+    # T11 & M1: Cumulative token tracking across all model calls / threads in the session
+    cumulative_input_tokens = 0
+    cumulative_output_tokens = 0
+    cumulative_cache_read_tokens = 0
+    cumulative_cache_creation_tokens = 0
 
-    coordination_span = tracer.start_span(
-        "chat.coordination_agent"
+    agent_span = tracer.start_span(
+        f"chat.{agent_name.lower().replace(' ', '_')}"
     )
-
-    coordination_span.set_attribute(
-        "agent.name",
-        "Coordination Agent"
-    )
-
-    coordination_span.set_attribute(
-        "model.name",
-        MODEL_USED
-    )
-
-    coordination_span.set_attribute(
-        "conversation.id",
-        conversation_id
-    )
-
-    finance_span = None
-    finance_span_thread_id = None
+    agent_span.set_attribute("agent.name", agent_name)
+    agent_span.set_attribute("model.name", MODEL_USED)
+    agent_span.set_attribute("conversation.id", conversation_id)
 
     tool_span = None
 
-    with client.beta.sessions.events.stream(
-        session.id
-    ) as stream:
-
-        client.beta.sessions.events.send(
-            session.id,
-            events=[
-                {
-                    "type": "user.message",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": agent_question
-                        }
-                    ]
-                }
-            ]
-        )
-
-        await create_process_log(
-            user_name=user_name,
-            user_id=user_id,
-            session_id=session.id,
-            conversation_id=conversation_id,
-            agent_id=coordination_agent.id,
-            agent_name="Coordination Agent",
-            env_id=ANTHROPIC_ENVIRONMENT_ID,
-            tool_id=None,
-            tool_req=None,
-            tool_response=None,
-            parent_agent="User",
-            child_agent="Coordination Agent",
-            input_data=agent_question,
-            output_data="User message sent to Coordination Agent",
-            context_window=context_window,
-            input_tokens=None,
-            output_tokens=None,
-            model_used=MODEL_USED
-        )
-
-        for event in stream:
-
-            if event.type == "span.model_request_end":
-
-                model_usage = getattr(
-                    event,
-                    "model_usage",
-                    None
-                )
-
-                if model_usage:
-
-                    input_tokens = getattr(
-                        model_usage,
-                        "input_tokens",
-                        0
-                    ) or 0
-
-                    output_tokens = getattr(
-                        model_usage,
-                        "output_tokens",
-                        0
-                    ) or 0
-
-                    cache_read_tokens = getattr(
-                        model_usage,
-                        "cache_read_input_tokens",
-                        0
-                    ) or 0
-
-                    cache_creation_tokens = getattr(
-                        model_usage,
-                        "cache_creation_input_tokens",
-                        0
-                    ) or 0
-
-                    thread_id = getattr(
-                        event,
-                        "session_thread_id",
-                        None
-                    )
-
-                    usage_data = {
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "cache_read_tokens": cache_read_tokens,
-                        "cache_creation_tokens": cache_creation_tokens
-                    }
-
-                    pending_model_usage[
-                        thread_id or session.id
-                    ] = usage_data
-
-                    input_token_counter.add(
-                        input_tokens,
-                        {
-                            "model": MODEL_USED
-                        }
-                    )
-
-                    output_token_counter.add(
-                        output_tokens,
-                        {
-                            "model": MODEL_USED
-                        }
-                    )
-
-                    if (
-                        coordination_span
-                        and (
-                            not thread_id
-                            or thread_id == session.id
-                        )
-                    ):
-                        coordination_span.set_attribute(
-                            "input.tokens",
-                            input_tokens
-                        )
-
-                        coordination_span.set_attribute(
-                            "output.tokens",
-                            output_tokens
-                        )
-
-                        coordination_span.set_attribute(
-                            "cache.read.tokens",
-                            cache_read_tokens
-                        )
-
-                        coordination_span.set_attribute(
-                            "cache.creation.tokens",
-                            cache_creation_tokens
-                        )
-
-                    if (
-                        finance_span
-                        and thread_id
-                        and thread_id == finance_span_thread_id
-                    ):
-                        finance_span.set_attribute(
-                            "input.tokens",
-                            input_tokens
-                        )
-
-                        finance_span.set_attribute(
-                            "output.tokens",
-                            output_tokens
-                        )
-
-                        finance_span.set_attribute(
-                            "cache.read.tokens",
-                            cache_read_tokens
-                        )
-
-                        finance_span.set_attribute(
-                            "cache.creation.tokens",
-                            cache_creation_tokens
-                        )
-
-                    print("\nToken Usage")
-                    print("Input Tokens:", input_tokens)
-                    print("Output Tokens:", output_tokens)
-
-                    await create_process_log(
-                        user_name=user_name,
-                        user_id=user_id,
-                        session_id=session.id,
-                        conversation_id=conversation_id,
-                        agent_id=generated_agent_id,
-                        agent_name=generated_agent,
-                        env_id=ANTHROPIC_ENVIRONMENT_ID,
-                        tool_id=tool_id,
-                        tool_req=tool_request,
-                        tool_response=tool_response,
-                        parent_agent="Model",
-                        child_agent=generated_agent,
-                        input_data=question,
-                        output_data="Model request completed",
-                        context_window=context_window,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        model_used=MODEL_USED
-                    )
-
-            elif event.type == "session.thread_created":
-
-                agent_name = getattr(
-                    event,
-                    "agent_name",
-                    None
-                )
-
-                thread_id = getattr(
-                    event,
-                    "session_thread_id",
-                    None
-                )
-
-                if agent_name == "Coordination Agent":
-
-                    coordination_span.set_attribute(
-                        "thread.id",
-                        thread_id or session.id
-                    )
-
-                if agent_name in [
-                    "Finance Agent",
-                    "General Agent"
-                ]:
-
-                    if agent_name not in participating_agents:
-                        participating_agents.append(
-                            agent_name
-                        )
-
-                    print(
-                        "Coordination Agent →",
-                        agent_name
-                    )
-
-                    agent_object = (
-                        finance_agent
-                        if agent_name == "Finance Agent"
-                        else general_agent
-                    )
-
-                    await create_process_log(
-                        user_name=user_name,
-                        user_id=user_id,
-                        session_id=session.id,
-                        conversation_id=conversation_id,
-                        agent_id=agent_object.id,
-                        agent_name=agent_name,
-                        env_id=ANTHROPIC_ENVIRONMENT_ID,
-                        tool_id=None,
-                        tool_req=None,
-                        tool_response=None,
-                        parent_agent="Coordination Agent",
-                        child_agent=agent_name,
-                        input_data=question,
-                        output_data="Request routed to agent",
-                        context_window=context_window,
-                        input_tokens=None,
-                        output_tokens=None,
-                        model_used=MODEL_USED
-                    )
-
-                    if agent_name == "Finance Agent":
-
-                        finance_span = tracer.start_span(
-                            "chat.finance_agent"
-                        )
-
-                        finance_span.set_attribute(
-                            "agent.name",
-                            "Finance Agent"
-                        )
-
-                        finance_span.set_attribute(
-                            "model.name",
-                            MODEL_USED
-                        )
-
-                        finance_span.set_attribute(
-                            "conversation.id",
-                            conversation_id
-                        )
-
-                        finance_span.set_attribute(
-                            "thread.id",
-                            thread_id or "unknown"
-                        )
-
-                        finance_span_thread_id = thread_id
-
-            elif event.type == "agent.custom_tool_use":
-
-                query = event.input.get(
-                    "query",
-                    ""
-                )
-
-                tool_request = query
-                tool_id = event.id
-
-                generated_agent = "Finance Agent"
-                generated_agent_id = finance_agent.id
-
-                print(
-                    "\nFinance Agent → get_finance_data"
-                )
-
-                print("SQL Query:")
-                print(query)
-
-                tool_span = tracer.start_span(
-                    "chat.finance_tool"
-                )
-
-                tool_span.set_attribute(
-                    "tool.name",
-                    "get_finance_data"
-                )
-
-                tool_span.set_attribute(
-                    "agent.name",
-                    "Finance Agent"
-                )
-
-                tool_span.set_attribute(
-                    "conversation.id",
-                    conversation_id
-                )
-
-                tool_span.set_attribute(
-                    "tool.request",
-                    query
-                )
-
-                try:
-
-                    query_val = validate_sql_query(query)
-                    if query_val.get("warnings"):
-                        print("\n[Data Validation Warnings]:")
-                        for w in query_val["warnings"]:
-                            print(f"  - {w}")
-                        if tool_span:
-                            tool_span.set_attribute(
-                                "validation.warnings",
-                                "; ".join(query_val["warnings"])
-                            )
-
-                    result = await fetch_finance_data(
-                        query
-                    )
-
-                    tool_result = extract_tool_result(
-                        result
-                    )
-
-                    tool_result = convert_tool_result_currency(
-                        tool_result
-                    )
-
-                    tool_response = tool_result
-
-                    print(
-                        "Database result received:"
-                    )
-
-                    print(tool_result)
-
-                    tool_span.set_attribute(
-                        "tool.status",
-                        "success"
-                    )
-
-                    tool_span.set_attribute(
-                        "tool.response",
-                        tool_result
-                    )
-
-                    await create_process_log(
-                        user_name=user_name,
-                        user_id=user_id,
-                        session_id=session.id,
-                        conversation_id=conversation_id,
-                        agent_id=finance_agent.id,
-                        agent_name="Finance Agent",
-                        env_id=ANTHROPIC_ENVIRONMENT_ID,
-                        tool_id=tool_id,
-                        tool_req=query,
-                        tool_response=tool_result,
-                        parent_agent="Finance Agent",
-                        child_agent="get_finance_data",
-                        input_data=query,
-                        output_data=tool_result,
-                        context_window=context_window,
-                        input_tokens=None,
-                        output_tokens=None,
-                        model_used=MODEL_USED
-                    )
-
-                    client.beta.sessions.events.send(
-                        session.id,
+    # A4: Stream with reconnect logic and retry bounds
+    stream_attempt = 0
+    message_sent = False
+    processed_event_ids = set()
+
+    while stream_attempt < MAX_STREAM_RETRIES:
+        stream_attempt += 1
+        try:
+            # A2: Use async_client for streaming
+            async with async_client.beta.sessions.events.stream(
+                session_id
+            ) as stream:
+
+                # Send user message only on the first attempt
+                if not message_sent:
+                    await async_client.beta.sessions.events.send(
+                        session_id,
                         events=[
                             {
-                                "type": "user.custom_tool_result",
-                                "custom_tool_use_id": event.id,
+                                "type": "user.message",
                                 "content": [
                                     {
                                         "type": "text",
-                                        "text": tool_result
+                                        "text": agent_question
                                     }
                                 ]
                             }
                         ]
                     )
+                    message_sent = True
 
-                except Exception as e:
-
-                    print(
-                        "Database error:",
-                        str(e)
-                    )
-
-                    tool_response = (
-                        f"Database error: {str(e)}"
-                    )
-
-                    tool_span.record_exception(
-                        e
-                    )
-
-                    tool_span.set_attribute(
-                        "tool.status",
-                        "error"
-                    )
-
+                    # M4: Compact process log (no full 12KB context_window dumping)
                     await create_process_log(
                         user_name=user_name,
                         user_id=user_id,
-                        session_id=session.id,
+                        session_id=session_id,
                         conversation_id=conversation_id,
-                        agent_id=finance_agent.id,
-                        agent_name="Finance Agent",
-                        env_id=ANTHROPIC_ENVIRONMENT_ID,
-                        tool_id=tool_id,
-                        tool_req=query,
-                        tool_response=tool_response,
-                        parent_agent="Finance Agent",
-                        child_agent="get_finance_data",
-                        input_data=query,
-                        output_data=tool_response,
-                        context_window=context_window,
-                        input_tokens=None,
-                        output_tokens=None,
-                        model_used=MODEL_USED
-                    )
-
-                    client.beta.sessions.events.send(
-                        session.id,
-                        events=[
-                            {
-                                "type": "user.custom_tool_result",
-                                "custom_tool_use_id": event.id,
-                                "content": [
-                                    {
-                                        "type": "text",
-                                        "text": tool_response
-                                    }
-                                ]
-                            }
-                        ]
-                    )
-
-                finally:
-
-                    if tool_span:
-
-                        tool_span.end()
-                        tool_span = None
-
-            elif event.type == "agent.thread_message_received":
-
-                agent_name = getattr(
-                    event,
-                    "from_agent_name",
-                    None
-                )
-
-                thread_id = getattr(
-                    event,
-                    "session_thread_id",
-                    None
-                )
-
-                if agent_name in [
-                    "Finance Agent",
-                    "General Agent"
-                ]:
-
-                    if agent_name not in participating_agents:
-                        participating_agents.append(
-                            agent_name
-                        )
-
-                    agent_object = (
-                        finance_agent
-                        if agent_name == "Finance Agent"
-                        else general_agent
-                    )
-
-                    generated_agent = agent_name
-                    generated_agent_id = agent_object.id
-
-                    usage = pending_model_usage.get(
-                        thread_id,
-                        {}
-                    )
-
-                    input_tokens = usage.get(
-                        "input_tokens"
-                    )
-
-                    output_tokens = usage.get(
-                        "output_tokens"
-                    )
-
-                    await create_process_log(
-                        user_name=user_name,
-                        user_id=user_id,
-                        session_id=session.id,
-                        conversation_id=conversation_id,
-                        agent_id=agent_object.id,
+                        agent_id=target_agent.id,
                         agent_name=agent_name,
-                        env_id=ANTHROPIC_ENVIRONMENT_ID,
-                        tool_id=None,
-                        tool_req=None,
-                        tool_response=None,
-                        parent_agent="Coordination Agent",
-                        child_agent=agent_name,
-                        input_data=question,
-                        output_data=(
-                            f"{agent_name} response received"
-                        ),
-                        context_window=context_window,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
-                        model_used=MODEL_USED
-                    )
-
-                    if (
-                        agent_name == "Finance Agent"
-                        and finance_span
-                    ):
-
-                        finance_span.set_attribute(
-                            "status",
-                            "success"
-                        )
-
-                        finance_span.end()
-                        finance_span = None
-
-            elif event.type == "agent.message":
-
-                text_parts = []
-
-                for block in event.content:
-
-                    if getattr(
-                        block,
-                        "type",
-                        None
-                    ) == "text":
-
-                        text_parts.append(
-                            block.text
-                        )
-
-                if text_parts:
-
-                    response_text = "".join(
-                        text_parts
-                    )
-
-                    final_response = response_text
-
-                    # -------------------------------------------------
-                    # FINAL RESPONSE CURRENCY ENFORCEMENT
-                    # -------------------------------------------------
-
-                    coordination_process = coordination_rule(
-                        question,
-                        result=final_response
-                    )
-
-                    if coordination_process.get(
-                        "currency_conversion_required",
-                        False
-                    ):
-                        coordination_process["target_currency"] = "USD"
-                        coordination_process["currency_conversion_required"] = True
-
-                    print("\nAgent response:")
-                    print(response_text)
-
-                    usage = pending_model_usage.get(
-                        session.id,
-                        {}
-                    )
-
-                    input_tokens = usage.get(
-                        "input_tokens"
-                    )
-
-                    output_tokens = usage.get(
-                        "output_tokens"
-                    )
-
-                    await create_process_log(
-                        user_name=user_name,
-                        user_id=user_id,
-                        session_id=session.id,
-                        conversation_id=conversation_id,
-                        agent_id=coordination_agent.id,
-                        agent_name="Coordination Agent",
                         env_id=ANTHROPIC_ENVIRONMENT_ID,
                         tool_id=None,
                         tool_req=None,
                         tool_response=None,
                         parent_agent="User",
-                        child_agent="Coordination Agent",
+                        child_agent=agent_name,
                         input_data=agent_question,
-                        output_data=response_text,
-                        context_window=context_window,
-                        input_tokens=input_tokens,
-                        output_tokens=output_tokens,
+                        output_data=f"User message sent to {agent_name}",
+                        context_window=None,
+                        input_tokens=None,
+                        output_tokens=None,
                         model_used=MODEL_USED
                     )
 
-            elif event.type == "session.status_idle":
+                async for event in stream:
 
-                stop_reason = getattr(
-                    event,
-                    "stop_reason",
-                    None
-                )
+                    # A4: Deduplicate events across reconnects
+                    event_id = getattr(event, "id", None)
+                    if event_id and event_id in processed_event_ids:
+                        continue
+                    if event_id:
+                        processed_event_ids.add(event_id)
 
-                if stop_reason:
+                    if event.type == "span.model_request_end":
 
-                    reason_type = getattr(
-                        stop_reason,
-                        "type",
-                        None
-                    )
-
-                    if reason_type == "end_turn":
-
-                        print(
-                            "\nRequest completed"
+                        model_usage = getattr(
+                            event,
+                            "model_usage",
+                            None
                         )
 
+                        if model_usage:
+
+                            input_tokens = getattr(
+                                model_usage,
+                                "input_tokens",
+                                0
+                            ) or 0
+
+                            output_tokens = getattr(
+                                model_usage,
+                                "output_tokens",
+                                0
+                            ) or 0
+
+                            cache_read_tokens = getattr(
+                                model_usage,
+                                "cache_read_input_tokens",
+                                0
+                            ) or 0
+
+                            cache_creation_tokens = getattr(
+                                model_usage,
+                                "cache_creation_input_tokens",
+                                0
+                            ) or 0
+
+                            # M1: Accumulate tokens accurately
+                            cumulative_input_tokens += input_tokens
+                            cumulative_output_tokens += output_tokens
+                            cumulative_cache_read_tokens += cache_read_tokens
+                            cumulative_cache_creation_tokens += cache_creation_tokens
+
+                            input_token_counter.add(
+                                input_tokens,
+                                {
+                                    "model": MODEL_USED
+                                }
+                            )
+
+                            output_token_counter.add(
+                                output_tokens,
+                                {
+                                    "model": MODEL_USED
+                                }
+                            )
+
+                            if agent_span:
+                                agent_span.set_attribute(
+                                    "input.tokens",
+                                    cumulative_input_tokens
+                                )
+                                agent_span.set_attribute(
+                                    "output.tokens",
+                                    cumulative_output_tokens
+                                )
+                                agent_span.set_attribute(
+                                    "cache.read.tokens",
+                                    cumulative_cache_read_tokens
+                                )
+                                agent_span.set_attribute(
+                                    "cache.creation.tokens",
+                                    cumulative_cache_creation_tokens
+                                )
+
+                            print(f"\nToken Usage (Model Request: in={input_tokens}, out={output_tokens} | Total: in={cumulative_input_tokens}, out={cumulative_output_tokens})")
+
+                            # M4: Compact process log entry
+                            await create_process_log(
+                                user_name=user_name,
+                                user_id=user_id,
+                                session_id=session_id,
+                                conversation_id=conversation_id,
+                                agent_id=target_agent.id,
+                                agent_name=agent_name,
+                                env_id=ANTHROPIC_ENVIRONMENT_ID,
+                                tool_id=tool_id,
+                                tool_req=tool_request,
+                                tool_response=tool_response,
+                                parent_agent="Model",
+                                child_agent=agent_name,
+                                input_data=question,
+                                output_data="Model request completed",
+                                context_window=None,
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                                model_used=MODEL_USED
+                            )
+
+                            # T11: Check session budget limit
+                            session_cost = estimate_session_cost(
+                                cumulative_input_tokens,
+                                cumulative_output_tokens
+                            )
+                            if session_cost >= SESSION_BUDGET_LIMIT_USD:
+                                print(
+                                    f"\n[T11] Session budget limit reached: "
+                                    f"${session_cost:.4f} >= ${SESSION_BUDGET_LIMIT_USD}"
+                                )
+                                final_response = (
+                                    "This session has reached the maximum allowed cost budget. "
+                                    "Please start a new conversation for additional queries."
+                                )
+                                break
+
+                    elif event.type == "agent.custom_tool_use":
+
+                        query = event.input.get(
+                            "query",
+                            ""
+                        )
+
+                        tool_request = query
+                        tool_id = event.id
+
+                        # T9: Enforce runtime database call limit (max 3 calls)
+                        db_call_count += 1
+                        if db_call_count > 3:
+                            print(
+                                f"\n[T9 Tool Call Limit] Maximum 3 database calls reached (attempt {db_call_count}). Blocking extra query."
+                            )
+                            tool_response = (
+                                "Error: Maximum allowed database tool calls (3) reached for this request. "
+                                "Please provide the best possible final response using the data already retrieved or indicate what further information is required."
+                            )
+                            await async_client.beta.sessions.events.send(
+                                session_id,
+                                events=[
+                                    {
+                                        "type": "user.custom_tool_result",
+                                        "custom_tool_use_id": event.id,
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": tool_response
+                                            }
+                                        ]
+                                    }
+                                ]
+                            )
+                            continue
+
+                        print(
+                            f"\n{agent_name} → get_finance_data (call {db_call_count}/3)"
+                        )
+                        print("SQL Query:", query)
+
+                        tool_span = tracer.start_span(
+                            "chat.finance_tool"
+                        )
+                        tool_span.set_attribute("tool.name", "get_finance_data")
+                        tool_span.set_attribute("agent.name", agent_name)
+                        tool_span.set_attribute("conversation.id", conversation_id)
+                        tool_span.set_attribute("tool.request", query)
+
+                        try:
+                            # S2: Validate SQL query for blocked operations and fan-out risk
+                            query_val = validate_sql_query(query)
+
+                            if query_val.get("is_blocked") or query_val.get("has_fan_out_risk"):
+                                validation_warnings = query_val.get("warnings", [])
+                                warning_text = (
+                                    "SQL VALIDATION ERROR — QUERY NOT EXECUTED.\n\n"
+                                    + "\n".join(validation_warnings)
+                                    + "\n\nPlease rewrite the query safely using CTEs or subqueries "
+                                    "to independently aggregate each dataset before joining."
+                                )
+                                print(f"\n[S2] Validation blocked query: {warning_text}")
+
+                                tool_response = warning_text
+                                tool_span.set_attribute("validation.blocked", True)
+                                tool_span.set_attribute("validation.warnings", "; ".join(validation_warnings))
+
+                                await async_client.beta.sessions.events.send(
+                                    session_id,
+                                    events=[
+                                        {
+                                            "type": "user.custom_tool_result",
+                                            "custom_tool_use_id": event.id,
+                                            "content": [
+                                                {
+                                                    "type": "text",
+                                                    "text": warning_text
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                )
+
+                                if tool_span:
+                                    tool_span.set_attribute("tool.status", "validation_blocked")
+                                    tool_span.end()
+                                    tool_span = None
+                                continue
+
+                            # T8 & S1: Fetch bounded data via asyncpg pool / read-only execution
+                            result = await fetch_finance_data(query)
+                            tool_result = extract_tool_result(result)
+
+                            # S4: Convert database INR monetary values to USD at tool boundary
+                            tool_result = convert_tool_result_currency(tool_result)
+
+                            # S3: Validate tool data and numerical reconciliation
+                            parsed_data = None
+                            try:
+                                if tool_result.strip().startswith(("{", "[")):
+                                    parsed_data = json.loads(tool_result)
+                                elif "{" in tool_result or "[" in tool_result:
+                                    m = re.search(r'\[.*\]|\{.*\}', tool_result, re.DOTALL)
+                                    if m:
+                                        parsed_data = json.loads(m.group(0))
+                            except Exception:
+                                pass
+
+                            if parsed_data is not None:
+                                data_val = validate_tool_data(query, parsed_data)
+                                if not data_val.get("reconciliation_passed", True):
+                                    issues = data_val.get("reconciliation_issues", [])
+                                    if issues:
+                                        tool_result += "\n\n[Data Reconciliation Note: " + "; ".join(issues) + "]"
+
+                            # S2: Attach any non-blocking advisory warnings (e.g. Scope notes)
+                            if query_val.get("warnings"):
+                                advisory_notes = [w for w in query_val["warnings"] if not w.startswith("BLOCKED")]
+                                if advisory_notes:
+                                    tool_result += "\n\n[" + "; ".join(advisory_notes) + "]"
+
+                            tool_response = tool_result
+
+                            # T10: Cache dataset for subsequent visualization requests
+                            last_finance_dataset[conversation_id] = {
+                                "tool_result": tool_result,
+                                "query": query
+                            }
+
+                            print("Database result received:\n", tool_result)
+
+                            tool_span.set_attribute("tool.status", "success")
+                            tool_span.set_attribute("tool.response", tool_result)
+
+                            # M4: Compact process log
+                            await create_process_log(
+                                user_name=user_name,
+                                user_id=user_id,
+                                session_id=session_id,
+                                conversation_id=conversation_id,
+                                agent_id=target_agent.id,
+                                agent_name=agent_name,
+                                env_id=ANTHROPIC_ENVIRONMENT_ID,
+                                tool_id=tool_id,
+                                tool_req=query,
+                                tool_response=tool_result,
+                                parent_agent=agent_name,
+                                child_agent="get_finance_data",
+                                input_data=query,
+                                output_data=tool_result,
+                                context_window=None,
+                                input_tokens=None,
+                                output_tokens=None,
+                                model_used=MODEL_USED
+                            )
+
+                            await async_client.beta.sessions.events.send(
+                                session_id,
+                                events=[
+                                    {
+                                        "type": "user.custom_tool_result",
+                                        "custom_tool_use_id": event.id,
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": tool_result
+                                            }
+                                        ]
+                                    }
+                                ]
+                            )
+
+                        except Exception as e:
+                            print("Database error:", str(e))
+                            tool_response = f"Database error: {str(e)}"
+                            tool_span.record_exception(e)
+                            tool_span.set_attribute("tool.status", "error")
+
+                            await create_process_log(
+                                user_name=user_name,
+                                user_id=user_id,
+                                session_id=session_id,
+                                conversation_id=conversation_id,
+                                agent_id=target_agent.id,
+                                agent_name=agent_name,
+                                env_id=ANTHROPIC_ENVIRONMENT_ID,
+                                tool_id=tool_id,
+                                tool_req=query,
+                                tool_response=tool_response,
+                                parent_agent=agent_name,
+                                child_agent="get_finance_data",
+                                input_data=query,
+                                output_data=tool_response,
+                                context_window=None,
+                                input_tokens=None,
+                                output_tokens=None,
+                                model_used=MODEL_USED
+                            )
+
+                            await async_client.beta.sessions.events.send(
+                                session_id,
+                                events=[
+                                    {
+                                        "type": "user.custom_tool_result",
+                                        "custom_tool_use_id": event.id,
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": tool_response
+                                            }
+                                        ]
+                                    }
+                                ]
+                            )
+
+                        finally:
+                            if tool_span:
+                                tool_span.end()
+                                tool_span = None
+
+                    elif event.type == "agent.message":
+                        text_parts = []
+                        for block in event.content:
+                            if getattr(block, "type", None) == "text":
+                                text_parts.append(block.text)
+
+                        if text_parts:
+                            response_text = "".join(text_parts)
+                            final_response = response_text
+                            print("\nAgent response:\n", response_text)
+
+                            await create_process_log(
+                                user_name=user_name,
+                                user_id=user_id,
+                                session_id=session_id,
+                                conversation_id=conversation_id,
+                                agent_id=target_agent.id,
+                                agent_name=agent_name,
+                                env_id=ANTHROPIC_ENVIRONMENT_ID,
+                                tool_id=None,
+                                tool_req=None,
+                                tool_response=None,
+                                parent_agent="User",
+                                child_agent=agent_name,
+                                input_data=agent_question,
+                                output_data=response_text,
+                                context_window=None,
+                                input_tokens=cumulative_input_tokens or None,
+                                output_tokens=cumulative_output_tokens or None,
+                                model_used=MODEL_USED
+                            )
+
+                    # ---------------------------------------------------------
+                    # A3: Handle ALL terminal/error stream states
+                    # ---------------------------------------------------------
+                    elif event.type == "session.status_idle":
+                        stop_reason = getattr(event, "stop_reason", None)
+                        if stop_reason:
+                            reason_type = getattr(stop_reason, "type", None)
+                            if reason_type == "end_turn":
+                                print("\nRequest completed (end_turn)")
+                                break
+                            elif reason_type == "max_tokens":
+                                print("\n[A3] Session stopped: max_tokens reached")
+                                if not final_response:
+                                    final_response = (
+                                        "The response was truncated because the maximum token limit was reached. "
+                                        "Please try a more specific question."
+                                    )
+                                break
+                            elif reason_type == "stop_sequence":
+                                print("\n[A3] Session stopped: stop_sequence hit")
+                                break
+                            else:
+                                print(f"\n[A3] Session stopped with reason: {reason_type}")
+                                break
+                        else:
+                            print("\n[A3] Session idle (no stop_reason) — completing")
+                            break
+
+                    elif event.type == "session.error":
+                        error_msg = getattr(event, "error", None) or getattr(event, "message", "Unknown session error")
+                        print(f"\n[A3] Session error: {error_msg}")
+                        if not final_response:
+                            final_response = (
+                                "A session error occurred while processing your request. "
+                                "Please try again."
+                            )
                         break
 
-    if finance_span:
+                else:
+                    break
 
-        finance_span.set_attribute(
-            "status",
-            "success"
-        )
+            break
 
-        finance_span.end()
-        finance_span = None
+        except (ConnectionError, TimeoutError, OSError) as e:
+            # A4: Stream dropped/interrupted — reconnect
+            print(f"\n[A4] Stream interrupted (attempt {stream_attempt}/{MAX_STREAM_RETRIES}): {e}")
+            if stream_attempt >= MAX_STREAM_RETRIES:
+                print("[A4] Max stream retries exhausted")
+                if not final_response:
+                    final_response = (
+                        "The connection was interrupted and could not be recovered. "
+                        "Please try again."
+                    )
+            # Preserves db_call_count (T9)
+            continue
 
-    coordination_span.set_attribute(
-        "status",
-        "success"
-    )
+    # M2: Authoritative session usage retrieval
+    try:
+        retrieved_session = await async_client.beta.sessions.retrieve(session_id)
+        if hasattr(retrieved_session, "usage") and retrieved_session.usage:
+            u = retrieved_session.usage
+            cumulative_input_tokens = getattr(u, "input_tokens", cumulative_input_tokens)
+            cumulative_output_tokens = getattr(u, "output_tokens", cumulative_output_tokens)
+            cumulative_cache_read_tokens = getattr(u, "cache_read_input_tokens", cumulative_cache_read_tokens)
+            cumulative_cache_creation_tokens = getattr(u, "cache_creation_input_tokens", cumulative_cache_creation_tokens)
+    except Exception as e:
+        print(f"[M2] Session usage retrieval note: {e}")
 
-    coordination_span.end()
+    if agent_span:
+        agent_span.set_attribute("status", "success")
+        agent_span.end()
 
     if not final_response:
-        final_response = (
-            "Sorry, I could not generate a response."
-        )
+        final_response = "Sorry, I could not generate a response."
 
-    coordination_process = coordination_rule(
-        question,
-        result=final_response
-    )
-
-    final_response = coordination_process.get(
-        "converted_result",
-        final_response
-    )
-
+    # S4 & Issue 28: Conditional deterministic currency conversion and response sanitization
+    coordination_process = coordination_rule(question, result=final_response)
+    final_response = coordination_process.get("converted_result", final_response)
     final_response = validate_and_sanitize_response(final_response)
 
-    await create_process_log(
-        user_name=user_name,
-        user_id=user_id,
-        session_id=session.id,
-        conversation_id=conversation_id,
-        agent_id=coordination_agent.id,
-        agent_name="Coordination Agent",
-        env_id=ANTHROPIC_ENVIRONMENT_ID,
-        tool_id=tool_id,
-        tool_req=tool_request,
-        tool_response=tool_response,
-        parent_agent="Coordination Agent",
-        child_agent="User",
-        input_data=question,
-        output_data=final_response,
-        context_window=context_window,
-        input_tokens=None,
-        output_tokens=None,
-        model_used=MODEL_USED
-    )
+    conversation_history.setdefault(conversation_id, []).append({"role": "user", "content": question})
+    conversation_history[conversation_id].append({"role": "assistant", "content": final_response})
 
-    if participating_agents:
-
-        print(
-            "Agents participated:",
-            ", ".join(participating_agents)
-        )
-
-    generated_agent = "Coordination Agent"
-    generated_agent_id = coordination_agent.id
-
-    print(
-        "Final response generated by:",
-        generated_agent
-    )
-
-    conversation_history.setdefault(
-        conversation_id,
-        []
-    ).append(
-        {
-            "role": "user",
-            "content": question
-        }
-    )
-
-    conversation_history[
-        conversation_id
-    ].append(
-        {
-            "role": "assistant",
-            "content": final_response
-        }
-    )
-
-    print(
-        "Conversation history updated:",
-        conversation_id
-    )
+    # A5: Update persisted session with latest dataset
+    last_ds = last_finance_dataset.get(conversation_id, {}).get("tool_result")
+    await persist_session(conversation_id, session_id, last_dataset=last_ds)
 
     await log_chat(
         user_name=user_name,
         user_id=user_id,
-        session_id=session.id,
+        session_id=session_id,
         conversation_id=conversation_id,
         user_msg=question,
         agent=generated_agent,
@@ -1043,10 +716,6 @@ CURRENT AGENT INPUT:
         tool_response=tool_response,
         tool_id=tool_id,
         assistant_msg=final_response
-    )
-
-    print(
-        "Chat logged to Supabase"
     )
 
     return (

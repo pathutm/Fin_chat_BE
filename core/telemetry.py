@@ -8,10 +8,6 @@ from opentelemetry.sdk.trace.export import (
     SpanExportResult
 )
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import (
-    ConsoleMetricExporter,
-    PeriodicExportingMetricReader
-)
 
 from services.logging import create_telemetry_log
 
@@ -159,15 +155,8 @@ tracer = trace.get_tracer(
 )
 
 
-metric_reader = PeriodicExportingMetricReader(
-    ConsoleMetricExporter()
-)
-
 meter_provider = MeterProvider(
-    resource=resource,
-    metric_readers=[
-        metric_reader
-    ]
+    resource=resource
 )
 
 metrics.set_meter_provider(

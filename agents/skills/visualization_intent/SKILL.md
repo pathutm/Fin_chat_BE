@@ -1,6 +1,6 @@
 ---
 name: visualization-intent
-description: Defines when financial analysis should be presented using tables, charts, or other visual formats, enforcing strict database data accuracy and integrity.
+description: Use when determining appropriate visual presentation formats (tables, line charts, bar charts, pie/donut charts) and enforcing complete database record fidelity and zero-loss chart dataset construction.
 ---
 
 # Visualization Intent & Data Accuracy Skill

@@ -1,6 +1,6 @@
 ---
 name: comparison-analytics
-description: Defines methods for comparing financial, procurement, inventory, production, product, vendor, and customer data.
+description: Use when comparing financial, procurement, inventory, production, product, vendor, customer, or multi-period data and analyzing differences or percentage changes between entities.
 ---
 
 # Comparison Analytics Skill

@@ -1,7 +1,6 @@
 ---
-
 name: procurement-analytics
-description: Defines methods for analyzing procurement performance, purchasing activity, supplier performance, purchase orders, receipts, invoices, and procurement trends.
+description: Use when analyzing procurement metrics, purchasing volumes, supplier spend, payment status breakdown (paid, overdue, partially paid, on hold, scheduled), financial exposure, and PR-PO-Vendor flows.
 ---
 
 # Procurement Analytics Skill

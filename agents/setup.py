@@ -1,5 +1,6 @@
+import os
 from agents.client import client
-from agents.skills_loader import FINANCE_SKILLS
+from agents.skills_loader import FINANCE_CUSTOM_SKILLS
 
 MODEL = "claude-haiku-4-5-20251001"
 
@@ -27,328 +28,34 @@ You are working with the live CFO Analysis Industry Database.
 
 Use ONLY the following confirmed tables and columns.
 
-TABLES AND COLUMNS
-
-bill_of_material:
-- bom_id
-- finished_product_id
-- raw_material_id
-- quantity_per_unit
-- unit_of_measure
-
-cost_centre:
-- cost_centre_id
-- cost_centre_name
-- department_function
-- status
-
-cost_centre_allocation:
-- allocation_id
-- grn_line_id
-- cost_centre_id
-- allocated_quantity
-- allocation_reason
-- allocation_driver
-
-customer:
-- customer_id
-- customer_name
-- customer_type
-- industry
-- location
-- payment_terms
-- currency
-- credit_limit
-- customer_status
-
-customer_order:
-- sales_order_id
-- customer_id
-- order_date
-- product_id
-- ordered_quantity
-- required_delivery_date
-- unit_price
-- order_status
-
-goods_receipt_note:
-- grn_id
-- po_id
-- vendor_id
-- delivery_date
-- warehouse_id
-- plant_id
-
-goods_receipt_note_line:
-- grn_line_id
-- grn_id
-- po_line_id
-- product_id
-- delivered_quantity
-- damaged_quantity
-- rejected_quantity
-- accepted_quantity
-- cumulative_accepted_quantity
-- remaining_po_quantity
-- batch_lot_number
-- plant_id
-- warehouse_id
-- unit_of_measure
-
-inventory_batch:
-- inventory_batch_id
-- grn_line_id
-- plant_id
-- warehouse_id
-- material_id
-- received_quantity
-- accepted_quantity
-- rejected_quantity
-- batch_date
-- available_quantity
-- unit_cost
-
-inventory_transaction:
-- transaction_id
-- product_id
-- warehouse_id
-- transaction_type
-- transaction_date
-- opening_quantity
-- receipt_quantity
-- consumption_quantity
-- transfer_quantity
-- adjustment_quantity
-- closing_quantity
-- inventory_batch_id
-- plant_id
-- unit_cost
-- reference_document_id
-
-line_of_business:
-- lob_id
-- lob_name
-- description
-- status
-
-material_consumption:
-- consumption_id
-- production_order_id
-- finished_product_id
-- raw_material_id
-- cost_centre_id
-- expected_quantity
-- actual_quantity
-- variance_quantity
-- variance_percent
-- inventory_batch_id
-- plant_id
-
-plant:
-- plant_id
-- plant_name
-- location
-- status
-- plant_code
-- plant_type
-- primary_capability
-- effective_from
-- effective_to
-
-plant_product_eligibility:
-- eligibility_id
-- plant_id
-- product_id
-- production_line_id
-- effective_from
-- effective_to
-- active_flag
-
-product:
-- product_id
-- product_name
-- product_type
-- product_category
-- diameter
-- length
-- pressure_class
-- grade
-- unit_of_measure
-- lob_id
-- standard_cost
-- active_status
-- material_family
-- nominal_diameter
-- wall_thickness
-- production_line_id
-- production_cost_centre_id
-- effective_from
-
-product_cost:
-- product_cost_id
-- finished_product_id
-- standard_cost
-- material_cost
-- direct_labour_cost
-- machine_cost
-- utilities_cost
-- quality_cost
-- packaging_cost
-- manufacturing_overhead_cost
-- actual_product_cost
-- cost_variance
-- cost_variance_percent
-- production_order_id
-- production_quantity
-- good_quantity
-- actual_unit_cost
-- standard_unit_cost
-
-production_line:
-- production_line_id
-- plant_id
-- line_code
-- line_name
-- production_capability
-- status
-- effective_from
-- effective_to
-
-production_order:
-- production_order_id
-- finished_product_id
-- production_quantity
-- plant_id
-- production_cost_centre_id
-- planned_start_date
-- planned_end_date
-- actual_start_date
-- actual_end_date
-- production_status
-- production_line_id
-- planned_quantity
-- good_quantity
-- rejected_quantity
-- scrap_quantity
-
-purchase_order:
-- po_id
-- vendor_id
-- po_date
-- currency
-- tax_rate
-- payment_terms
-- expected_delivery_date
-- cost_centre_id
-- plant_id
-- warehouse_id
-- po_status
-- pr_id
-
-purchase_order_line:
-- po_line_id
-- po_id
-- product_id
-- ordered_quantity
-- unit_price
-- plant_id
-- unit_of_measure
-
-purchase_requisition:
-- pr_id
-- pr_date
-- requested_by
-- cost_centre_id
-- plant_id
-- material_id
-- requested_quantity
-- urgency_level
-- status
-
-raw_material_compatibility:
-- compatibility_id
-- material_id
-- material_name
-- material_family
-- product_family
-- application
-- product_type
-- plant_capability
-- bom_eligible
-
-reconciliation:
-- reconciliation_id
-- po_id
-- grn_id
-- invoice_id
-- vendor_match
-- product_match
-- po_quantity
-- grn_accepted_quantity
-- invoice_quantity
-- unit_price_match
-- tax_match
-- invoice_amount
-- reconciliation_status
-
-supplier_invoice:
-- invoice_id
-- grn_id
-- po_id
-- vendor_id
-- invoice_date
-- invoice_number
-- invoice_quantity
-- tax
-- freight_amount
-- discount_amount
-- invoice_amount
-- payment_due_date
-- payment_terms
-- payment_status
-- payment_date
-- paid_amount
-
-supplier_invoice_line:
-- invoice_line_id
-- invoice_id
-- grn_line_id
-- po_line_id
-- product_id
-- invoice_quantity
-- unit_price
-- line_amount
-
-supplier_payment:
-- payment_id
-- invoice_id
-- vendor_id
-- invoice_amount
-- due_date
-- payment_date
-- paid_amount
-- outstanding_amount
-- payment_status
-- days_late_early
-- payment_method
-
-vendor:
-- vendor_id
-- vendor_name
-- material_category
-- payment_terms
-- currency
-- gst_tax_category
-- vendor_status
-
-warehouse:
-- warehouse_id
-- warehouse_name
-- location
-- status
-- plant_id
-- warehouse_code
-- warehouse_type
+TABLES AND COLUMNS:
+bill_of_material(bom_id, finished_product_id, raw_material_id, quantity_per_unit, unit_of_measure)
+cost_centre(cost_centre_id, cost_centre_name, department_function, status)
+cost_centre_allocation(allocation_id, grn_line_id, cost_centre_id, allocated_quantity, allocation_reason, allocation_driver)
+customer(customer_id, customer_name, customer_type, industry, location, payment_terms, currency, credit_limit, customer_status)
+customer_order(sales_order_id, customer_id, order_date, product_id, ordered_quantity, required_delivery_date, unit_price, order_status)
+goods_receipt_note(grn_id, po_id, vendor_id, delivery_date, warehouse_id, plant_id)
+goods_receipt_note_line(grn_line_id, grn_id, po_line_id, product_id, delivered_quantity, damaged_quantity, rejected_quantity, accepted_quantity, cumulative_accepted_quantity, remaining_po_quantity, batch_lot_number, plant_id, warehouse_id, unit_of_measure)
+inventory_batch(inventory_batch_id, grn_line_id, plant_id, warehouse_id, material_id, received_quantity, accepted_quantity, rejected_quantity, batch_date, available_quantity, unit_cost)
+inventory_transaction(transaction_id, product_id, warehouse_id, transaction_type, transaction_date, opening_quantity, receipt_quantity, consumption_quantity, transfer_quantity, adjustment_quantity, closing_quantity, inventory_batch_id, plant_id, unit_cost, reference_document_id)
+line_of_business(lob_id, lob_name, description, status)
+material_consumption(consumption_id, production_order_id, finished_product_id, raw_material_id, cost_centre_id, expected_quantity, actual_quantity, variance_quantity, variance_percent, inventory_batch_id, plant_id)
+plant(plant_id, plant_name, location, status, plant_code, plant_type, primary_capability, effective_from, effective_to)
+plant_product_eligibility(eligibility_id, plant_id, product_id, production_line_id, effective_from, effective_to, active_flag)
+product(product_id, product_name, product_type, product_category, diameter, length, pressure_class, grade, unit_of_measure, lob_id, standard_cost, active_status, material_family, nominal_diameter, wall_thickness, production_line_id, production_cost_centre_id, effective_from)
+product_cost(product_cost_id, finished_product_id, standard_cost, material_cost, direct_labour_cost, machine_cost, utilities_cost, quality_cost, packaging_cost, manufacturing_overhead_cost, actual_product_cost, cost_variance, cost_variance_percent, production_order_id, production_quantity, good_quantity, actual_unit_cost, standard_unit_cost)
+production_line(production_line_id, plant_id, line_code, line_name, production_capability, status, effective_from, effective_to)
+production_order(production_order_id, finished_product_id, production_quantity, plant_id, production_cost_centre_id, planned_start_date, planned_end_date, actual_start_date, actual_end_date, production_status, production_line_id, planned_quantity, good_quantity, rejected_quantity, scrap_quantity)
+purchase_order(po_id, vendor_id, po_date, currency, tax_rate, payment_terms, expected_delivery_date, cost_centre_id, plant_id, warehouse_id, po_status, pr_id)
+purchase_order_line(po_line_id, po_id, product_id, ordered_quantity, unit_price, plant_id, unit_of_measure)
+purchase_requisition(pr_id, pr_date, requested_by, cost_centre_id, plant_id, material_id, requested_quantity, urgency_level, status)
+raw_material_compatibility(compatibility_id, material_id, material_name, material_family, product_family, application, product_type, plant_capability, bom_eligible)
+reconciliation(reconciliation_id, po_id, grn_id, invoice_id, vendor_match, product_match, po_quantity, grn_accepted_quantity, invoice_quantity, unit_price_match, tax_match, invoice_amount, reconciliation_status)
+supplier_invoice(invoice_id, grn_id, po_id, vendor_id, invoice_date, invoice_number, invoice_quantity, tax, freight_amount, discount_amount, invoice_amount, payment_due_date, payment_terms, payment_status, payment_date, paid_amount)
+supplier_invoice_line(invoice_line_id, invoice_id, grn_line_id, po_line_id, product_id, invoice_quantity, unit_price, line_amount)
+supplier_payment(payment_id, invoice_id, vendor_id, invoice_amount, due_date, payment_date, paid_amount, outstanding_amount, payment_status, days_late_early, payment_method)
+vendor(vendor_id, vendor_name, material_category, payment_terms, currency, gst_tax_category, vendor_status)
+warehouse(warehouse_id, warehouse_name, location, status, plant_id, warehouse_code, warehouse_type)
 """
 
 FINANCE_RELATIONSHIPS_PROMPT = """
@@ -490,7 +197,7 @@ FINANCE_AGENT_PROMPT = """
 You are the Finance Agent.
 
 Your responsibility is to retrieve CFO database information using the
-get_finance_data tool and provide the required data to the Coordination Agent.
+get_finance_data tool and provide the required data to the user.
 
 Follow the database schema, relationships and SQL rules provided in this prompt.
 
@@ -602,107 +309,78 @@ You are the Coordination Agent.
 You coordinate the General Agent and Finance Agent.
 
 Rules:
-- Understand the user's request.
 - Route database-related finance questions to the Finance Agent.
 - Route general questions to the General Agent.
-- Return the final answer to the user.
+- Return the final answer clearly and concisely.
 - Do not invent database values.
-- Preserve real database results returned by the Finance Agent.
-- Keep responses clear and professional.
-
-RESPONSE & CURRENCY RULES:
-- ALWAYS answer with a complete, clear textual response first.
-- For database/finance questions, use ONLY actual data retrieved from Supabase.
-- For monetary values, use "$" formatting (e.g. $1,366,742.19, $7.2M). Do NOT display "USD" or "INR" or "₹".
-- When presenting trend, breakdown, or time-series data (e.g. monthly revenue or invoice amounts), provide the complete dataset in a clean Markdown table (e.g. | Month | Revenue | Invoice Amount |) containing ALL returned records from the database. Do NOT drop, truncate, sample, or summarize the records into a few bullet points.
-- Do NOT output raw ASCII charts or visual code blocks in the text response.
-
-REASONING & NUMERICAL INTEGRITY RULES:
-- Never recalculate, alter, or override numerical values provided by the Finance Agent.
-- Validated backend value > recomputation: Preserve supplied totals, variances, percentages, and metrics.
-- Prevent metric mixing: Never describe PO vs. Invoice differences as "savings".
-- Prevent unsupported claims: Never invent root causes, benchmarks, contract terms, or speculative conclusions (e.g., highest spend != overcharging; variance != manipulation; inventory increase != poor management).
-- If the underlying cause or benchmark is not determinable from the retrieved data, state clearly that it cannot be determined from available data.
-- Ensure recommendations are strictly evidence-based and framed as review/investigation steps rather than proven accusations.
-- Ensure equivalent questions receive consistent numerical answers.
+- Monetary values are formatted in USD ($).
 """
 
-finance_agent = client.beta.agents.create(
-    name="Finance Agent",
-    model=MODEL,
-    system=(
-        SECURITY_PROMPT
-        + FINANCE_AGENT_PROMPT
-        + FINANCE_DATABASE_PROMPT
-        + FINANCE_RELATIONSHIPS_PROMPT
-        + FINANCE_SQL_RULES_PROMPT
-        + "\n"
-        + FINANCE_SKILLS
-    ),
-    tools=[
-        {
-            "type": "custom",
-            "name": "get_finance_data",
-            "description": """
-Execute a read-only SQL query against the CFO Analysis Industry Database.
+# ---------------------------------------------------------------------------
+# A1: Pre-configured agent references.
+# Production runtime reads agent IDs from environment variables without
+# calling agents.create() dynamically at runtime or import time.
+# ---------------------------------------------------------------------------
 
-Rules:
-- Maximum 3 calls per user request.
-- Use only confirmed tables and columns.
-- Never query information_schema.
-- Never use SELECT *.
-- Never perform write or destructive SQL.
-- Never guess columns or tables.
-- Use confirmed foreign-key relationships.
-""",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": """
-A read-only SQL SELECT query using only the confirmed CFO database schema.
-"""
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    ]
+class _AgentRef:
+    def __init__(self, agent_id: str, name: str = "Agent"):
+        self.id = agent_id
+        self.name = name
+        self.version = None
+
+finance_agent = _AgentRef(
+    os.getenv("FINANCE_AGENT_ID", "agent_finance_prod"),
+    name="Finance Agent"
 )
 
-general_agent = client.beta.agents.create(
-    name="General Agent",
-    model=MODEL,
-    system=(
-        SECURITY_PROMPT
-        + GENERAL_AGENT_PROMPT
-    )
+general_agent = _AgentRef(
+    os.getenv("GENERAL_AGENT_ID", "agent_general_prod"),
+    name="General Agent"
 )
 
-coordination_agent = client.beta.agents.create(
-    name="Coordination Agent",
-    model=MODEL,
-    system=(
-        SECURITY_PROMPT
-        + COORDINATION_AGENT_PROMPT
-    ),
-    multiagent={
-        "type": "coordinator",
-        "agents": [
+coordination_agent = _AgentRef(
+    os.getenv("COORDINATION_AGENT_ID", "agent_coordination_prod"),
+    name="Coordination Agent"
+)
+
+def deploy_agents():
+    """
+    Offline/deployment-only utility to create agents on Anthropic API and
+    print their generated IDs for storing in .env (A1).
+    Never executed during normal request handling or server startup.
+    """
+    fin = client.beta.agents.create(
+        name="Finance Agent",
+        model=MODEL,
+        system=(
+            SECURITY_PROMPT
+            + FINANCE_AGENT_PROMPT
+            + FINANCE_DATABASE_PROMPT
+            + FINANCE_RELATIONSHIPS_PROMPT
+            + FINANCE_SQL_RULES_PROMPT
+        ),
+        skills=FINANCE_CUSTOM_SKILLS,
+        tools=[
             {
-                "type": "agent",
-                "id": general_agent.id,
-                "version": general_agent.version
-            },
-            {
-                "type": "agent",
-                "id": finance_agent.id,
-                "version": finance_agent.version
+                "type": "custom",
+                "name": "get_finance_data",
+                "description": "Execute a read-only SQL query against the CFO database and return results.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "A read-only SQL SELECT query."
+                        }
+                    },
+                    "required": ["query"]
+                }
             }
         ]
-    }
-)
+    )
+    print(f"FINANCE_AGENT_ID={fin.id}")
+    return fin
+
 
 def get_context_window():
     return (
@@ -711,3 +389,17 @@ def get_context_window():
         + FINANCE_RELATIONSHIPS_PROMPT
         + FINANCE_SQL_RULES_PROMPT
     )
+
+# Session budget limit in USD (T11)
+SESSION_BUDGET_LIMIT_USD = 50.0
+
+# Haiku pricing per million tokens (approximate)
+_HAIKU_INPUT_COST_PER_M = 0.80   # $0.80 per 1M input tokens
+_HAIKU_OUTPUT_COST_PER_M = 4.00  # $4.00 per 1M output tokens
+
+
+def estimate_session_cost(input_tokens: int, output_tokens: int) -> float:
+    """Estimate the USD cost of a session based on token usage."""
+    input_cost = (input_tokens / 1_000_000) * _HAIKU_INPUT_COST_PER_M
+    output_cost = (output_tokens / 1_000_000) * _HAIKU_OUTPUT_COST_PER_M
+    return input_cost + output_cost

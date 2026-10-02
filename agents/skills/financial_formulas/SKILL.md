@@ -1,6 +1,6 @@
 ---
 name: financial-formulas
-description: Defines standard financial calculation methods for cost analysis, variance analysis, growth analysis, and financial comparisons.
+description: Use when calculating financial formulas such as cost variance, percentage change, YoY growth, revenue, PO amounts, invoice amounts, margins, or consumption variances from retrieved data.
 ---
 
 # Financial Formulas Skill

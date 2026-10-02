@@ -1,6 +1,6 @@
 ---
 name: procurement-reconciliation
-description: Defines procurement, purchase order, goods receipt, supplier invoice, and reconciliation analysis methods.
+description: Use when performing 3-way matching between Purchase Orders, Goods Receipt Notes (GRN), and Supplier Invoices, or investigating price/quantity reconciliation mismatches and variances.
 ---
 
 # Procurement Reconciliation Skill

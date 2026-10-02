@@ -46,26 +46,37 @@ CORRUPTED_PREFIX_PATTERN = re.compile(r"\$0\.(\d{1,2}),(\d{3}(?:\.\d{1,2})?)")
 CORRUPTED_MILLIONS_PATTERN = re.compile(r"\$0\.01\.(\d{1,2})([KMBkmb])")
 
 
+BLOCKED_SQL_PATTERN = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|COPY|GRANT|REVOKE|SET|EXECUTE|pg_sleep)\b",
+    re.IGNORECASE
+)
+
+
 def validate_sql_query(query: str) -> dict:
     """
-    Validates a SQL query before execution against Data Accuracy and Validation Rules:
+    Validates a SQL query before execution against Data Accuracy and Validation Rules (S2):
     - Protect against Join Fan-Out (Rule 3)
-    - Determine Correct Data Grain (Rule 2)
-    - Scope Validation (Rule 5)
+    - Block destructive/dangerous operations (Rule 1)
+    - Scope Validation & Grain Checks (Rule 5)
     """
     if not query or not isinstance(query, str):
-        return {"valid": True, "warnings": []}
+        return {"valid": True, "warnings": [], "is_blocked": False}
 
     q_lower = query.lower()
     warnings = []
+    is_blocked = False
 
-    # 1. Join Fan-Out Check
-    # Find all mentioned child tables in the query
+    # 1. Blocked Operations Check
+    blocked_match = BLOCKED_SQL_PATTERN.search(query)
+    if blocked_match:
+        is_blocked = True
+        warning_msg = f"BLOCKED DANGEROUS SQL OPERATION: '{blocked_match.group(1).upper()}' is prohibited in read-only analysis."
+        warnings.append(warning_msg)
+        logger.warning(warning_msg)
+
+    # 2. Join Fan-Out Check
     mentioned_tables = [tbl for tbl in MANY_TO_ONE_CHILD_TABLES if re.search(rf"\b{tbl}\b", q_lower)]
-    
-    # Check if multiple child tables are joined directly
     if len(mentioned_tables) >= 2 and "join" in q_lower:
-        # Check if pre-aggregation (CTE or subquery with GROUP BY) is used
         has_cte = "with " in q_lower
         has_subquery_group = bool(re.search(r"\(\s*select\b.*?\bgroup\s+by\b.*?\)", q_lower, re.DOTALL))
         
@@ -79,7 +90,7 @@ def validate_sql_query(query: str) -> dict:
             warnings.append(warning_msg)
             logger.warning(warning_msg)
 
-    # 2. Scope Validation Check
+    # 3. Scope Validation Check
     if "limit " in q_lower and "count(" not in q_lower:
         warnings.append(
             "SCOPE NOTE: Query contains LIMIT without COUNT(*). Do not treat the returned rows "
@@ -87,7 +98,8 @@ def validate_sql_query(query: str) -> dict:
         )
 
     return {
-        "valid": True,
+        "valid": not is_blocked and not any("FAN-OUT" in w for w in warnings),
+        "is_blocked": is_blocked,
         "warnings": warnings,
         "has_fan_out_risk": any("FAN-OUT" in w for w in warnings),
     }
@@ -95,32 +107,64 @@ def validate_sql_query(query: str) -> dict:
 
 def validate_tool_data(query: str, data: list | dict) -> dict:
     """
-    Validates data returned from get_finance_data against Data Accuracy Rules:
-    - Check numerical reconciliation where components are present (Rule 6)
-    - Check for unexpected duplication or suspicious values (Rule 4, Rule 12)
+    Validates data returned from get_finance_data against Data Accuracy Rules (S3):
+    - Check numerical reconciliation across production, GRN, and payment metrics
+    - Check for unexpected duplication or suspicious values
     """
     reconciliation_results = []
 
-    if isinstance(data, list):
-        for idx, row in enumerate(data):
-            if not isinstance(row, dict):
-                continue
-            
-            # Production reconciliation check: production_qty = good_qty + rejected_qty + scrap_qty
-            prod_keys = {"production_quantity", "good_quantity", "rejected_quantity", "scrap_quantity"}
-            if prod_keys.issubset(row.keys()):
-                try:
-                    p_qty = float(str(row["production_quantity"]).replace(",", ""))
-                    g_qty = float(str(row["good_quantity"]).replace(",", ""))
-                    r_qty = float(str(row["rejected_quantity"]).replace(",", ""))
-                    s_qty = float(str(row["scrap_quantity"]).replace(",", ""))
-                    diff = abs(p_qty - (g_qty + r_qty + s_qty))
-                    if diff > 0.01:
-                        reconciliation_results.append(
-                            f"Row {idx}: Production quantity ({p_qty}) != Good ({g_qty}) + Rejected ({r_qty}) + Scrap ({s_qty}), diff={diff}"
-                        )
-                except (ValueError, TypeError):
-                    pass
+    rows = data if isinstance(data, list) else [data] if isinstance(data, dict) else []
+
+    for idx, row in enumerate(rows):
+        if not isinstance(row, dict):
+            continue
+        
+        # 1. Production reconciliation: production_quantity = good + rejected + scrap
+        prod_keys = {"production_quantity", "good_quantity", "rejected_quantity", "scrap_quantity"}
+        if prod_keys.issubset(row.keys()):
+            try:
+                p_qty = float(str(row["production_quantity"]).replace(",", ""))
+                g_qty = float(str(row["good_quantity"]).replace(",", ""))
+                r_qty = float(str(row["rejected_quantity"]).replace(",", ""))
+                s_qty = float(str(row["scrap_quantity"]).replace(",", ""))
+                diff = abs(p_qty - (g_qty + r_qty + s_qty))
+                if diff > 0.01:
+                    reconciliation_results.append(
+                        f"Row {idx}: Production quantity ({p_qty}) != Good ({g_qty}) + Rejected ({r_qty}) + Scrap ({s_qty}), diff={diff:.2f}"
+                    )
+            except (ValueError, TypeError):
+                pass
+
+        # 2. GRN Line reconciliation: delivered_quantity = accepted + rejected + damaged
+        grn_keys = {"delivered_quantity", "accepted_quantity", "rejected_quantity", "damaged_quantity"}
+        if grn_keys.issubset(row.keys()):
+            try:
+                d_qty = float(str(row["delivered_quantity"]).replace(",", ""))
+                a_qty = float(str(row["accepted_quantity"]).replace(",", ""))
+                rej_qty = float(str(row["rejected_quantity"]).replace(",", ""))
+                dam_qty = float(str(row["damaged_quantity"]).replace(",", ""))
+                diff = abs(d_qty - (a_qty + rej_qty + dam_qty))
+                if diff > 0.01:
+                    reconciliation_results.append(
+                        f"Row {idx}: Delivered quantity ({d_qty}) != Accepted ({a_qty}) + Rejected ({rej_qty}) + Damaged ({dam_qty}), diff={diff:.2f}"
+                    )
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Supplier Payment reconciliation: invoice_amount = paid_amount + outstanding_amount
+        pay_keys = {"invoice_amount", "paid_amount", "outstanding_amount"}
+        if pay_keys.issubset(row.keys()):
+            try:
+                inv_amt = float(str(row["invoice_amount"]).replace(",", "").replace("$", ""))
+                paid_amt = float(str(row["paid_amount"]).replace(",", "").replace("$", ""))
+                out_amt = float(str(row["outstanding_amount"]).replace(",", "").replace("$", ""))
+                diff = abs(inv_amt - (paid_amt + out_amt))
+                if diff > 0.05:
+                    reconciliation_results.append(
+                        f"Row {idx}: Invoice amount (${inv_amt:.2f}) != Paid (${paid_amt:.2f}) + Outstanding (${out_amt:.2f}), diff=${diff:.2f}"
+                    )
+            except (ValueError, TypeError):
+                pass
 
     return {
         "reconciliation_passed": len(reconciliation_results) == 0,

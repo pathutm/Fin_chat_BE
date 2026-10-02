@@ -2,9 +2,26 @@ import json
 import os
 import re
 
-# Fixed exchange rate: ₹95.7 = $1 USD. Conversion formula: USD = INR / 95.7
-INR_PER_USD = 95.7
-INR_TO_USD_RATE = 1.0 / INR_PER_USD
+def get_inr_to_usd_rate() -> float:
+    """Retrieve dynamic exchange rate from environment variables (S4)."""
+    env_rate = os.getenv("INR_TO_USD_RATE")
+    if env_rate:
+        try:
+            return float(env_rate)
+        except ValueError:
+            pass
+    env_inr_per_usd = os.getenv("INR_PER_USD", "95.7")
+    try:
+        return 1.0 / float(env_inr_per_usd)
+    except (ValueError, ZeroDivisionError):
+        return 1.0 / 95.7
+
+def get_inr_per_usd() -> float:
+    rate = get_inr_to_usd_rate()
+    return (1.0 / rate) if rate > 0 else 95.7
+
+INR_TO_USD_RATE = get_inr_to_usd_rate()
+INR_PER_USD = get_inr_per_usd()
 
 
 NON_MONETARY_TERMS = {
@@ -28,30 +45,37 @@ MONETARY_TERMS = {
 }
 
 
+def is_monetary_query(question: str) -> bool:
+    """
+    Deterministically determines if a user question is asking about monetary values (Issue 27).
+    """
+    if not question or not isinstance(question, str):
+        return False
+    q_lower = question.lower()
+    if re.search(r"[₹$€£]|\b(inr|usd|rupees?|rs\.?|dollars?)\b", q_lower):
+        return True
+    return any(re.search(rf"\b{term}\b", q_lower) for term in MONETARY_TERMS)
+
+
 def is_monetary_column(col_name: str) -> bool:
     """
     Deterministically determines if a database column or alias represents a monetary value.
     Non-monetary fields (quantities, counts, dates, IDs, percentages, ratios) return False.
-    Generic aggregation prefixes/suffixes (total, sum, avg) on non-monetary metrics return False.
     """
     if not col_name or not isinstance(col_name, str):
         return False
     name = col_name.strip().lower()
 
-    # Exact or suffix ID check (e.g. "po_id", "id", "vendor_id")
     if name == "id" or name.endswith("_id") or name.startswith("id_"):
         return False
 
-    # Check for fields that are already in USD
     if name.endswith("_usd") or name.startswith("usd_"):
         return False
 
-    # Check for non-monetary keywords first (e.g. "ordered_quantity", "total_delivered", "variance_quantity")
     for term in NON_MONETARY_TERMS:
         if term in name:
             return False
 
-    # Check for true monetary keywords
     for term in MONETARY_TERMS:
         if term in name:
             return True
@@ -62,24 +86,23 @@ def is_monetary_column(col_name: str) -> bool:
 def _convert_row_monetary_values(row: dict, value_map: dict | None = None) -> dict:
     """
     Converts all monetary fields in a database row from INR to USD deterministically.
-    Uses exact fixed conversion: USD = INR / 95.7.
-    Preserves original non-monetary fields (quantities, counts, dates, IDs) and explicit non-INR currencies.
+    Uses dynamic configured rate from environment.
     """
     if not isinstance(row, dict):
         return row
 
     row_currency = str(row.get("currency", "")).strip().upper()
     if row_currency and row_currency not in ("INR", "₹"):
-        # Explicit non-INR currency provided by the database (Requirement 1)
         return row
 
+    rate = get_inr_to_usd_rate()
     new_row = {}
     for k, v in row.items():
         if is_monetary_column(k) and v is not None:
             try:
                 cleaned = str(v).replace(",", "").strip()
                 num = float(cleaned)
-                usd_val = round(num / INR_PER_USD, 2)
+                usd_val = round(num * rate, 2)
                 new_row[k] = f"{usd_val:.2f}"
             except (ValueError, TypeError):
                 new_row[k] = v
@@ -95,7 +118,7 @@ def _convert_row_monetary_values(row: dict, value_map: dict | None = None) -> di
 def convert_tool_result_currency(tool_result_str: str, value_map: dict | None = None) -> str:
     """
     Inspects tool output from execute_sql / get_finance_data.
-    Deterministically converts all database INR monetary values to USD using USD = INR / 95.7.
+    Deterministically converts database INR monetary values to USD using configured rate.
     Preserves non-monetary values (quantities, counts, dates, IDs, etc.).
     """
     if not tool_result_str or not isinstance(tool_result_str, str):
@@ -124,10 +147,8 @@ def convert_tool_result_currency(tool_result_str: str, value_map: dict | None = 
         return raw_json
 
     def _process_text_content(content: str) -> str:
-        # Convert JSON arrays of objects: [{"col": "val", ...}, ...]
         if re.search(r"\[\s*\{.*?\}\s*\]", content, flags=re.DOTALL):
             return re.sub(r"\[\s*\{.*?\}\s*\]", _sub_array, content, flags=re.DOTALL)
-        # Convert single JSON objects if no array: {"col": "val", ...}
         elif re.search(r"\{\s*\"[^{}]*\"\s*:.*?\}", content, flags=re.DOTALL):
             return re.sub(r"\{\s*\"[^{}]*\"\s*:.*?\}", _sub_object, content, flags=re.DOTALL)
         return content
@@ -146,8 +167,7 @@ def convert_tool_result_currency(tool_result_str: str, value_map: dict | None = 
 def _convert_inr_to_usd(amount_str: str, suffix: str = "", is_negative: bool = False) -> str:
     """
     Deterministically converts an INR monetary amount to formatted USD ($X.XX).
-    Uses exact fixed conversion: USD = INR / 95.7.
-    Preserves scale suffixes (K/M/B) where appropriate.
+    Uses configured INR_TO_USD_RATE.
     """
     cleaned = amount_str.replace(",", "").strip()
     try:
@@ -172,7 +192,8 @@ def _convert_inr_to_usd(amount_str: str, suffix: str = "", is_negative: bool = F
         multiplier = 10_000_000.0
 
     inr_val = val * multiplier
-    usd_val = inr_val / INR_PER_USD
+    rate = get_inr_to_usd_rate()
+    usd_val = inr_val * rate
 
     prefix = "-" if usd_val < 0 else ""
     abs_usd = abs(usd_val)
@@ -190,8 +211,26 @@ def _convert_inr_to_usd(amount_str: str, suffix: str = "", is_negative: bool = F
 
 
 def coordination_rule(question, result=None):
+    """
+    Determines if currency conversion is required and applies deterministic conversion.
+    Only converts when INR monetary indicators are present (Issue 28, Issue 27).
+    """
     question_text = (question or "").lower()
     result_text = str(result) if result is not None else ""
+
+    # Check if INR currency or monetary conversion is actually needed
+    has_inr_markers = bool(re.search(r"₹|\b(?:INR|Rs\.?|Indian\s+Rupees?|Rupees?)\b", result_text, re.IGNORECASE)) or bool(re.search(r"₹|\b(?:INR|Rs\.?|Indian\s+Rupees?|Rupees?)\b", question_text, re.IGNORECASE))
+    is_about_money = is_monetary_query(question) or has_inr_markers
+
+    if not has_inr_markers and not (result and is_about_money and re.search(r"\b\d+\b", result_text)):
+        # No conversion needed (Issue 28)
+        return {
+            "currency_conversion_required": False,
+            "target_currency": "USD",
+            "currency_reason": "No INR currency conversion required.",
+            "output_format": "standard",
+            "converted_result": result_text,
+        }
 
     converted_result = result_text
 
@@ -228,7 +267,6 @@ def coordination_rule(question, result=None):
     converted_result = postfix_pattern.sub(_postfix_sub, converted_result)
 
     # Clean up standalone non-numeric currency terms (e.g. "(INR)" -> "(USD)", "in Rupees" -> "in USD")
-    # Never simply replace them with '$'
     converted_result = re.sub(
         r"\b(?:INR|Rs\.?|Indian\s+Rupees?|Rupees?)\b",
         "USD",
@@ -238,9 +276,9 @@ def coordination_rule(question, result=None):
     converted_result = re.sub(r"₹", "USD", converted_result)
 
     return {
-        "currency_conversion_required": True,
+        "currency_conversion_required": has_inr_markers,
         "target_currency": "USD",
-        "currency_reason": "MANDATORY USD CONVERSION: Converted from INR using fixed rate ₹95.7 = $1 USD (USD = INR / 95.7).",
+        "currency_reason": "Converted INR amounts to USD using configured exchange rate.",
         "output_format": "$ ONLY",
         "converted_result": converted_result,
     }

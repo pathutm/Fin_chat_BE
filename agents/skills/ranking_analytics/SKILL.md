@@ -1,6 +1,6 @@
 ---
 name: ranking-analytics
-description: Defines methods for ranking products, vendors, customers, costs, quantities, and operational metrics.
+description: Use when ranking entities (products, vendors, customers, cost centres) by highest/lowest spend, order volume, cost, quantity, variance, or top-N lists.
 ---
 
 # Ranking Analytics Skill
