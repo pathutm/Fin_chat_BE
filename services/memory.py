@@ -1,6 +1,8 @@
+import asyncio
 import os
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 
 from supabase import create_client, Client
 
@@ -38,43 +40,74 @@ async def persist_session(
     last_dataset: str | None = None
 ):
     """Persist or update a conversation session authoritatively in Supabase (A5)."""
-    sb = get_supabase()
     record = {
         "conversation_id": conversation_id,
         "session_id": session_id,
         "last_dataset": last_dataset,
-        "updated_at": datetime.utcnow().isoformat()
+        "updated_at": datetime.now(timezone.utc).isoformat()
     }
-    # Authoritative upsert on conversation_id
-    sb.table("conversation_sessions").upsert(
-        record, on_conflict="conversation_id"
-    ).execute()
+
+    def _upsert():
+        get_supabase().table("conversation_sessions").upsert(
+            record, on_conflict="conversation_id"
+        ).execute()
+
+    # supabase-py is synchronous - run it off the event loop (A2)
+    await asyncio.to_thread(_upsert)
 
 
 async def load_session(conversation_id: str) -> dict | None:
     """Load an authoritative persisted session for a conversation (A5)."""
-    sb = get_supabase()
-    result = (
-        sb.table("conversation_sessions")
-        .select("session_id, last_dataset, created_at")
-        .eq("conversation_id", conversation_id)
-        .limit(1)
-        .execute()
-    )
-    if result.data and len(result.data) > 0:
-        return result.data[0]
-    return None
+    def _select():
+        return (
+            get_supabase().table("conversation_sessions")
+            .select("session_id, last_dataset, created_at, updated_at")
+            .eq("conversation_id", conversation_id)
+            .limit(1)
+            .execute()
+        )
+
+    result = await asyncio.to_thread(_select)
+    if not (result.data and len(result.data) > 0):
+        return None
+
+    record = result.data[0]
+    # Restore the cached dataset after a server restart (T10)
+    if record.get("last_dataset") and conversation_id not in last_finance_dataset:
+        last_finance_dataset[conversation_id] = {"tool_result": record["last_dataset"]}
+    return record
+
+
+# ---------------------------------------------------------------------------
+# T10: Visualization follow-ups ("chart this", "show it as a graph") are answered
+# from the cached dataset with no model call.
+# ---------------------------------------------------------------------------
+
+_VIZ_WORDS = re.compile(
+    r"(?i)\b(visuali[sz](e|ed|ing|ation)|charts?|graphs?|plot(ted|ting)?|diagram)\b"
+)
+_VIZ_REFERENCE = re.compile(
+    r"(?i)\b(this|that|it|these|those|the\s+(data|result|results|above|same)|above|dataset)\b"
+)
+
+
+def is_visualization_followup(question: str, conversation_id: str | None) -> bool:
+    """True when the user asks to chart the previous result and a dataset is cached."""
+    if not question or not conversation_id or conversation_id not in last_finance_dataset:
+        return False
+    if not _VIZ_WORDS.search(question):
+        return False
+    words = question.strip().split()
+    return bool(_VIZ_REFERENCE.search(question)) or len(words) <= 4
 
 
 def get_bounded_conversation_context(conversation_id: str, max_messages: int = 3) -> str:
     """
     T7: Bounded Conversation Context Strategy (Strict Maximum 3 Previous Messages).
-    
-    Rules:
-    - Include at most the 3 most recent previous messages (0–3 retains all; 4+ retains only last 3).
-    - The current user message is NOT counted in the 3.
-    - Prevents unbounded token growth across long multi-turn sessions.
-    - Preserves follow-up resolution (pronouns, 'that vendor', 'this quarter').
+
+    Only used when a conversation has to start a NEW Managed Agents session
+    (first message after a restart or an expired session). A reused session
+    already holds the full history, with platform caching and compaction.
     """
     history = conversation_history.get(conversation_id, [])
     if not history:
@@ -100,3 +133,10 @@ def get_bounded_conversation_context(conversation_id: str, max_messages: int = 3
         + "\n[End of Recent Context — Follow-up References Apply to Above]\n"
     )
 
+
+def remember_turn(conversation_id: str, question: str, answer: str, max_entries: int = 20):
+    """Append a turn to the in-memory history, keeping it bounded (A5)."""
+    history = conversation_history.setdefault(conversation_id, [])
+    history.append({"role": "user", "content": question})
+    history.append({"role": "assistant", "content": answer})
+    del history[:-max_entries]

@@ -4,6 +4,8 @@ import os
 from typing import Tuple, NamedTuple, Optional
 from dotenv import load_dotenv
 
+from services.memory import is_visualization_followup
+
 load_dotenv()
 
 # ---------------------------------------------------------------------------
@@ -106,10 +108,10 @@ BLOCKED_INJECTION_PATTERNS = [
     r"(?i)developer\s*mode",
     r"(?i)dan\s*mode",
     r"(?i)act\s+as\s+(dan|gpt|an?\s+ai|a\s+language\s+model|an?\s+assistant)\s+without\s+(rules|restrictions|guidelines|guardrails)",
-    r"(?i)bypass\s*(guardrails|rules|security|restrictions|filters|all)?",
+    r"(?i)\bbypass\s+(the\s+|your\s+|all\s+)?(guardrails?|rules|security|restrictions|filters|safety|checks)\b",
     r"(?i)disable\s*(guardrails|rules|security)",
     r"(?i)pretend\s+(you\s+have\s+no|there\s+are\s+no)\s+(rules|restrictions|guardrails)",
-    r"(?i)(reveal|show|tell|display|print|share)\s*(me\s*)?(your\s*)?(system(\s*prompt)?|prompt|instructions|secret|key|password)",
+    r"(?i)(reveal|show|tell|display|print|share)\s*(me\s*)?(your\s*)?(system(\s*prompt)?|prompt|instructions|secrets?|(api|secret|private|access)[\s_-]*key|passwords?)\b",
     r"(?i)what\s+(instructions\s+are\s+you\s+following|are\s+your\s+(instructions|system\s+prompts?|rules))",
     r"(?i)instructions\s+are\s+you\s+following",
     r"(?i)give\s+me\s+your\s+api\s*key",
@@ -136,7 +138,7 @@ PROFANITY_PATTERNS = [
 
 PII_PATTERNS = [
     # -- PAN & Government IDs --
-    r"(?i)\b(my\s+)?pan(\s+(card|number|no\.?|id))?\s*(is|:|=)?\s*[a-zA-Z0-9]+",
+    r"(?i)\b(my\s+)?pan(\s+(card|number|no\.?|id))?\s*(is|:|=)\s*[a-zA-Z0-9]+",
     r"(?i)\bpan\s+(card|number|no\.?|id)\b",
     r"(?i)\bmy\s+pan\b",
     r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
@@ -162,7 +164,7 @@ PII_PATTERNS = [
     r"(?i)\b(personal|private)?\s*(bank|savings|checking)\s+(account|acc)\s*(number|no\.?|details|info)?\s*(is|:|=)?\s*\d+",
     r"(?i)\b(bank\s+)?account\s*(no\.?|number)\s*(is|:|=)\s*\d+",
     r"(?i)\bmy\s+(bank\s+)?(account|acc)\b",
-    r"(?i)\b(credit|debit)\s*card\s*(number|no\.?|num|#|details)?",
+    r"(?i)\b(credit|debit)\s*card\s*((number|no|num|details)\b|#)",
     r"(?i)\bcard\s*(number|no\.?)\s*(is|:|=)\s*\d+",
     r"\b(?:\d{4}[ -]){3}\d{4}\b",
     r"(?i)\bcvv\s*(is|:|=)?\s*\d{3,4}\b",
@@ -554,6 +556,19 @@ async def check_input_guardrail(
             is_deleted=True,
             requires_confirmation=False,
             safe_finance_query=None
+        )
+
+    # 4b. Chart follow-up on a dataset this conversation already retrieved
+    #     ("show this as a chart") - answered from cache with no model call
+    if is_visualization_followup(msg, conversation_id):
+        print(_SEP)
+        print("Input Guardrail called")
+        print("Input Guardrail: PASSED (Visualization follow-up on cached dataset)")
+        print(_SEP)
+        return InputGuardrailResult(
+            is_allowed=True,
+            response_text="",
+            is_deleted=False
         )
 
     # 5. Mixed Query: Finance + Non-Finance (No PII)

@@ -4,12 +4,11 @@ import asyncio
 from dotenv import load_dotenv
 
 # Ensure project root in sys.path
-sys.path.insert(0, "/Users/user/Desktop/Rish´/Finance/Fin_chat_BE")
-load_dotenv("/Users/user/Desktop/Rish´/Finance/Fin_chat_BE/.env")
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+load_dotenv()
 
 from guardrails.actions import check_input_guardrail, DEFAULT_REJECTION_MESSAGE
 from schemas.chat import ChatRequest
-import app
 
 async def run_live_tests():
     api_key = os.getenv("NVIDIA_API_KEY")
@@ -40,7 +39,8 @@ async def run_live_tests():
         req = ChatRequest(message=query, conversation_id="test-session-1")
         
         # Test input guardrail directly
-        allowed, fallback = await check_input_guardrail(query)
+        res = await check_input_guardrail(query)
+        allowed, fallback = res.is_allowed, res.response_text
         coordination_agent_called = allowed
         
         passed_expectation = (allowed == expected_allowed)

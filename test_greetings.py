@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Focused greeting tests for the updated Input Guardrail."""
-import asyncio, sys
-sys.path.insert(0, "/Users/user/Desktop/Rish´/Finance/Fin_chat_BE")
+import asyncio, os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
-load_dotenv("/Users/user/Desktop/Rish´/Finance/Fin_chat_BE/.env")
+load_dotenv()
 from guardrails.actions import check_input_guardrail
 
 TESTS = [

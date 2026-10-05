@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uuid
 
@@ -25,6 +26,31 @@ supabase: Client = create_client(
     SUPABASE_URL,
     SUPABASE_SERVICE_ROLE_KEY
 )
+
+# Background inserts still running (kept so they aren't garbage-collected)
+_pending_inserts: set[asyncio.Task] = set()
+
+
+def _insert_in_background(table: str, data: dict, label: str):
+    """
+    Insert a log row without blocking the request (A2). supabase-py is synchronous,
+    so the insert runs in a worker thread; a failed log write is reported, never raised.
+    """
+    def _insert():
+        try:
+            supabase.table(table).insert(data).execute()
+        except Exception as e:
+            print(f"[Logging] {label} warning: {e}")
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        _insert()
+        return
+
+    task = loop.create_task(asyncio.to_thread(_insert))
+    _pending_inserts.add(task)
+    task.add_done_callback(_pending_inserts.discard)
 
 
 async def log_chat(
@@ -56,17 +82,8 @@ async def log_chat(
         "Assistant_Msg": assistant_msg
     }
 
-    try:
-        return (
-            supabase
-            .table("finance_ai_logs")
-            .insert(log_data)
-            .execute()
-        )
-
-    except Exception as e:
-        print(f"[Logging] log_chat warning: {e}")
-        raise e
+    # A logging failure must never fail the user's request
+    _insert_in_background("finance_ai_logs", log_data, "log_chat")
 
 
 def _clean_uuid(
@@ -129,19 +146,7 @@ async def create_process_log(
         "Chat_Log_Id": chat_log_id
     }
 
-    try:
-        return (
-            supabase
-            .table("finance_ai_process_logs")
-            .insert(process_data)
-            .execute()
-        )
-
-    except Exception as e:
-        print(
-            f"[Logging] create_process_log warning: {e}"
-        )
-        return None
+    _insert_in_background("finance_ai_process_logs", process_data, "create_process_log")
 
 
 async def create_telemetry_log(

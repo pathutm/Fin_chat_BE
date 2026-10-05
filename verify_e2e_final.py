@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Final E2E verification — 6 test cases against live /chat endpoint."""
-import os, time, requests
+import os, sys, time, requests
+
+# Finance questions here run the live agent and are billed. Run with a separate
+# API key (own spend limit) on the server, and opt in explicitly:
+#   RUN_LIVE_E2E=1 python verify_e2e_final.py
+if os.getenv("RUN_LIVE_E2E") != "1":
+    sys.exit("Skipped: this test calls the live agent and costs money. Set RUN_LIVE_E2E=1 to run it.")
 
 SERVER_LOG = "/Users/user/.gemini/antigravity-ide/brain/60aca6c8-3d01-4494-9762-75b358137262/.system_generated/tasks/task-1003.log"
 ENDPOINT   = "http://127.0.0.1:8000/chat"

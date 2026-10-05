@@ -1,5 +1,3 @@
-from contextlib import asynccontextmanager
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,7 +5,6 @@ from schemas.chat import ChatRequest, ChatResponse
 from services.chat import handle_chat_logic
 from services.memory import conversation_history
 from services.logging import create_process_log
-from services.db import close_db_pool
 
 from guardrails.actions import (
     check_input_guardrail,
@@ -15,16 +12,7 @@ from guardrails.actions import (
 )
 
 
-# A6: Lifecycle management for asyncpg connection pool
-@asynccontextmanager
-async def lifespan(app):
-    # Startup — pool is lazy-initialized on first query
-    yield
-    # Shutdown — close the connection pool
-    await close_db_pool()
-
-
-app = FastAPI(title="Finance AI Chatbot", lifespan=lifespan)
+app = FastAPI(title="Finance AI Chatbot")
 
 app.add_middleware(
     CORSMiddleware,

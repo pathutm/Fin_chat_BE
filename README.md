@@ -44,21 +44,38 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 
-Open `.env` and fill in your credentials:
-```env
-ANTHROPIC_API_KEY=your_anthropic_api_key
-ANTHROPIC_ENVIRONMENT_ID=your_anthropic_environment_id
-SUPABASE_PROJECT_REF=your_supabase_project_ref
-SUPABASE_ACCESS_TOKEN=your_supabase_access_token
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-NVIDIA_API_KEY=your_nvidia_api_key
-GROQ_API_KEY=your_groq_api_key
+Open `.env` and fill in your credentials. `.env.example` lists every variable with a short note.
+
+---
+
+### 5. Create the agents (once, and after every prompt or skill change)
+The three agents are files: `agents/coordinator.md` (Coordination Agent, with the other two in its multiagent roster), `agents/finance.md` (Finance Agent, with the skills in `agents/skills/`) and `agents/general.md` (General Agent). Sync them with the [`ant` CLI](https://github.com/anthropics/anthropic-cli/releases) (1.30.0 or later); applying the coordinator also applies the files it references:
+
+```bash
+ant apply --dry-run -v agents/coordinator.md   # review the plan
+ant apply agents/coordinator.md                # create/update all three agents and upload the skills
+```
+
+This writes `claude-lock.json` (commit it). The server reads the agent IDs from there, or from `COORDINATION_AGENT_ID` / `FINANCE_AGENT_ID` / `GENERAL_AGENT_ID` in `.env`. Each later `ant apply` creates a new agent version instead of a new agent.
+
+---
+
+### 6. Database setup (once)
+Conversation sessions are stored in Supabase:
+
+```sql
+create table if not exists conversation_sessions (
+  conversation_id text primary key,
+  session_id text,
+  last_dataset text,
+  created_at timestamptz default now(),
+  updated_at timestamptz
+);
 ```
 
 ---
 
-### 5. Run the Server
+### 7. Run the Server
 ```bash
 python3 -m uvicorn app:app --reload
 ```
@@ -70,3 +87,11 @@ The backend API will run at **`http://127.0.0.1:8000`**.
 - **Multi-Agent Coordination:** Orchestrates Coordination Agent, Finance Agent, and General Agent with Claude Tool Calling.
 - **MCP Database Connection:** Executes live Supabase SQL queries securely through Model Context Protocol (MCP).
 - **Input/Output Guardrails:** Uses NVIDIA Nemotron 3.5 Content Safety and Groq for input classification and PII scrubbing.
+
+### Token usage optimizations
+- **Agents created once:** The three agents are defined in `agents/*.md` and synced with `ant apply`, which versions them instead of creating new agents on every server start.
+- **Coordinator relay:** When a sub-agent's report already answers the question, the Coordination Agent relays it instead of rewriting it, so the answer is generated once.
+- **Skills on demand:** The 10 finance playbooks in `agents/skills/` are attached to the Finance Agent as Skills and loaded only when a question needs one.
+- **One session per conversation:** The platform keeps history with prompt caching and compaction; after 5 idle minutes a fresh session starts with the last 3 messages. Each session has a spend cap (`SESSION_BUDGET_CENTS`).
+- **Small SQL results:** At most 100 rows and 3 queries per question; only the rows are sent to the model, in a compact format, with amounts converted to USD. MCP itself runs on the backend and uses no Claude tokens.
+- **No model call** for greetings and chart follow-ups.

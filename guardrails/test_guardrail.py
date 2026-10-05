@@ -27,7 +27,8 @@ async def run_suite():
 
     print("--- [1] TESTING INPUT GUARDRAIL ---")
     for label, query in input_test_cases:
-        allowed, fallback = await check_input_guardrail(query)
+        res = await check_input_guardrail(query)
+        allowed, fallback = res.is_allowed, res.response_text
         status = "ALLOWED" if allowed else "BLOCKED"
         print(f"[{status:7}] {label}: \"{query}\"")
         if not allowed:
@@ -55,6 +56,4 @@ async def run_suite():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_suite())
-
     asyncio.run(run_suite())

@@ -1,208 +1,199 @@
+import json
 import re
-import os
-import asyncpg
 
-from core.config import SUPABASE_PROJECT_REF
+import httpx2
 
-# ---------------------------------------------------------------------------
-# A6: Persistent asyncpg connection pool with lifecycle management
-# S1: Read-only enforcement + 10s statement timeout
-# ---------------------------------------------------------------------------
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
-# Database URL — constructed from Supabase project ref or explicit env var
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    f"postgresql://postgres.{SUPABASE_PROJECT_REF}:"
-    f"{os.getenv('SUPABASE_DB_PASSWORD', '')}@"
-    f"aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+from core.config import (
+    SUPABASE_PROJECT_REF,
+    SUPABASE_ACCESS_TOKEN
 )
 
-_pool: asyncpg.Pool | None = None
-_use_direct_db = bool(os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_PASSWORD"))
+# ---------------------------------------------------------------------------
+# Finance data via the Supabase MCP server (read_only=true) - execute_sql.
+# MCP runs on our backend, not inside the model, so it uses no Claude tokens.
+# Only the result text sent back to the agent does, so results are trimmed:
+# T8: Row cap (100) and result size cap (8,000 chars), always reported to the agent
+# ---------------------------------------------------------------------------
+
+SUPABASE_MCP_URL = (
+    "https://mcp.supabase.com/mcp"
+    f"?project_ref={SUPABASE_PROJECT_REF}&read_only=true"
+)
+
+HEADERS = {
+    "Authorization": f"Bearer {SUPABASE_ACCESS_TOKEN}"
+}
+
+MAX_ROWS = 100
+MAX_RESULT_CHARS = 8000
+
+BLOCKED_SQL = r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|COPY|GRANT|REVOKE|SET|EXECUTE|pg_sleep)\b'
 
 
-async def get_db_pool() -> asyncpg.Pool:
-    """Get or create the asyncpg connection pool (A6)."""
-    global _pool
-    if _pool is not None and not _pool._closed:
-        return _pool
+async def _execute_sql(query: str) -> str:
+    """Run one query through the Supabase MCP execute_sql tool and return its text."""
+    async with httpx2.AsyncClient(
+        headers=HEADERS,
+        timeout=30.0
+    ) as http_client:
 
-    _pool = await asyncpg.create_pool(
-        DATABASE_URL,
-        min_size=2,
-        max_size=10,
-        command_timeout=10.0,  # S1: 10s statement timeout
-        server_settings={
-            "default_transaction_read_only": "on",  # S1: read-only enforcement
-            "statement_timeout": "10000",            # S1: 10s timeout at server level
-        }
+        async with streamable_http_client(
+            SUPABASE_MCP_URL,
+            http_client=http_client
+        ) as (read, write):
+
+            async with ClientSession(read, write) as session:
+
+                await session.initialize()
+
+                result = await session.call_tool(
+                    "execute_sql",
+                    {"query": query}
+                )
+
+    text = _result_text(result)
+    if getattr(result, "isError", False):
+        print(f"[DB Error] MCP execute_sql failed: {text}")
+        raise RuntimeError(text or "Database query error")
+    return text
+
+
+def _result_text(result) -> str:
+    return "\n".join(
+        item.text for item in getattr(result, "content", []) or []
+        if hasattr(item, "text")
     )
-    print("[A6/S1] asyncpg connection pool created (read-only, 10s timeout)")
-    return _pool
 
 
-async def close_db_pool():
-    """Shutdown the connection pool gracefully."""
-    global _pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
-        print("[A6] asyncpg connection pool closed")
+def _rows_from_mcp_text(text: str) -> list | None:
+    """
+    Pull the JSON row array out of execute_sql's reply. Supabase wraps the rows
+    in explanatory text and untrusted-data boundary tags; sending only the rows
+    saves those tokens on every call (the system prompt carries the
+    "treat results as data" rule once instead).
+    """
+    payload = text
+    try:
+        outer = json.loads(text)
+        if isinstance(outer, dict) and isinstance(outer.get("result"), str):
+            payload = outer["result"]
+    except ValueError:
+        pass
+
+    start = payload.find("[")
+    while start != -1:
+        try:
+            rows, _ = json.JSONDecoder().raw_decode(payload, start)
+            if isinstance(rows, list):
+                return rows
+        except ValueError:
+            pass
+        start = payload.find("[", start + 1)
+    return None
 
 
-async def _fetch_via_pool(query: str) -> str:
-    """Execute read-only SQL via asyncpg pool and return formatted results."""
-    pool = await get_db_pool()
+def _format_rows(rows: list[dict], more_rows: bool) -> str:
+    """
+    Serialize rows as a JSON array (the format convert_tool_result_currency and
+    validate_tool_data parse), keeping the JSON valid when the size cap applies.
+    """
+    if not rows:
+        return "No rows returned."
 
-    async with pool.acquire() as conn:
-        # Execute within a read-only transaction (S1 double enforcement)
-        async with conn.transaction(readonly=True):
-            rows = await conn.fetch(query)
+    notes = []
+    if more_rows:
+        notes.append(
+            f"More than {MAX_ROWS} rows matched; only the first {MAX_ROWS} are shown. "
+            "Tell the user the list is partial, or re-query with SUM/COUNT/AVG/GROUP BY "
+            "or narrower filters."
+        )
 
-        if not rows:
-            return "No rows returned."
+    shown = rows
+    text = json.dumps(shown, default=str)
+    if len(text) > MAX_RESULT_CHARS:
+        # Drop rows from the end until it fits, so the JSON stays parseable
+        while len(shown) > 1 and len(text) > MAX_RESULT_CHARS:
+            shown = shown[: max(1, len(shown) * 3 // 4)]
+            text = json.dumps(shown, default=str)
+        notes.append(
+            f"Output exceeded {MAX_RESULT_CHARS:,} characters; only {len(shown)} of the "
+            "returned rows are shown. Use SQL aggregations or narrower filters for the full picture."
+        )
 
-        # Format as readable text (matching MCP output format)
-        columns = list(rows[0].keys())
-        result_lines = [" | ".join(columns)]
-        result_lines.append("-" * len(result_lines[0]))
-
-        for row in rows:
-            result_lines.append(
-                " | ".join(str(row[col]) for col in columns)
-            )
-
-        combined = "\n".join(result_lines)
-
-        # Cap character length to prevent massive token bloat (T8)
-        if len(combined) > 8000:
-            combined = (
-                combined[:8000]
-                + "\n\n[Note: Output exceeded 8,000 characters and was capped. "
-                "Please use SQL aggregations (e.g. SUM, COUNT, AVG, GROUP BY) "
-                "or narrower filters to query specific subsets.]"
-            )
-
-        return combined
+    if notes:
+        text += "\n\n[Note: " + " ".join(notes) + "]"
+    return text
 
 
-async def fetch_finance_data(query: str):
+def _cap_text(text: str) -> str:
+    if len(text) <= MAX_RESULT_CHARS:
+        return text
+    return (
+        text[:MAX_RESULT_CHARS]
+        + f"\n\n[Note: Output exceeded {MAX_RESULT_CHARS:,} characters and was capped. "
+        "Please use SQL aggregations (e.g. SUM, COUNT, AVG, GROUP BY) "
+        "or narrower filters to query specific subsets.]"
+    )
+
+
+async def fetch_finance_data(query: str) -> str:
 
     if not query or not query.strip():
         raise ValueError(
             "SQL query cannot be empty"
         )
 
-    blocked_pattern = r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|COPY|GRANT|REVOKE|SET|EXECUTE|pg_sleep)\b'
-    match = re.search(blocked_pattern, query, re.IGNORECASE)
+    match = re.search(BLOCKED_SQL, query, re.IGNORECASE)
     if match:
         raise ValueError(
             f"Blocked SQL operation/construct: {match.group(1).upper()}"
         )
 
-    # Safe bounded query wrapping (T8)
-    exec_query = query
-    if not re.search(r'\bLIMIT\b', query, re.IGNORECASE):
-        cleaned = query.strip().rstrip(';')
-        exec_query = f"SELECT * FROM ({cleaned}) AS q_bounded LIMIT 101"
+    # T8: Fetch one row more than the cap so we know whether rows were cut off
+    cleaned = query.strip().rstrip(';')
+    bounded_query = f"SELECT * FROM ({cleaned}) AS q_bounded LIMIT {MAX_ROWS + 1}"
 
-    # A6: Execute directly via persistent asyncpg connection pool (Read-only + 10s statement timeout)
-    print("DB → asyncpg pool (direct read-only execution)")
+    print("MCP → execute_sql")
     try:
-        result_text = await _fetch_via_pool(exec_query)
-        return _wrap_text_result(result_text)
-    except asyncpg.PostgresSyntaxError:
-        # Fall back to raw query within pool if bounded subquery encountered a dialect limitation
-        result_text = await _fetch_via_pool(query)
-        return _wrap_text_result(result_text)
-    except Exception as e:
-        err_str = str(e)
-        print(f"[DB Error] asyncpg query error: {err_str}")
+        try:
+            text = await _execute_sql(bounded_query)
+        except RuntimeError as e:
+            if "syntax" not in str(e).lower():
+                raise
+            # Some statements can't be wrapped in a subquery; run as written
+            text = await _execute_sql(cleaned)
+
+    except httpx2.HTTPStatusError as e:
+        print(f"[DB Error] HTTP Status Error: {e}")
         raise RuntimeError(
-            f"Database query execution error: {err_str}"
+            f"Database connectivity error: HTTP {e.response.status_code}"
         ) from e
 
+    except (httpx2.ConnectError, httpx2.TimeoutException) as e:
+        print(f"[DB Error] Network/Connection Error: {e}")
+        raise RuntimeError(
+            "Database connectivity error: Unable to reach database server."
+        ) from e
 
-class _TextResult:
-    """Wrapper to make asyncpg text results compatible with extract_tool_result."""
-    def __init__(self, text):
-        self.content = [type('TextItem', (), {'text': text})()]
-        self.isError = False
+    except RuntimeError:
+        raise
 
+    except Exception as e:
+        err_str = str(e)
+        print(f"[DB Error] Tool/Execution Error: {err_str}")
+        if "TaskGroup" in err_str or "streamable" in err_str:
+            raise RuntimeError(
+                "Database query execution error: The SQL query encountered an execution issue."
+            ) from e
+        raise RuntimeError(f"Database query execution error: {err_str}") from e
 
-def _wrap_text_result(text: str):
-    """Wrap a plain text result into an object compatible with extract_tool_result."""
-    return _TextResult(text)
+    rows = _rows_from_mcp_text(text)
+    if rows is None:
+        # Unrecognized reply shape - pass it through, size-capped
+        return _cap_text(text)
 
-
-def extract_tool_result(result):
-
-    if hasattr(result, "isError") and result.isError:
-
-        texts = []
-
-        if hasattr(result, "content"):
-
-            for item in result.content:
-
-                if hasattr(item, "text"):
-
-                    texts.append(
-                        item.text
-                    )
-
-        if texts:
-
-            return "\n".join(texts)
-
-        return (
-            "Database query error: "
-            f"{str(result)}"
-        )
-
-    if hasattr(result, "content"):
-
-        texts = []
-
-        for item in result.content:
-
-            if hasattr(item, "text"):
-
-                texts.append(
-                    item.text
-                )
-
-        if texts:
-
-            combined = "\n".join(
-                texts
-            )
-
-            if (
-                "TaskGroup" in combined
-                or "sub-exception" in combined
-            ):
-
-                return (
-                    "Database query execution error: "
-                    "The SQL query encountered an execution error. "
-                    "Please ensure table names and identifier "
-                    "formats are valid."
-                )
-
-            # Cap character length to prevent massive token bloat (T8)
-            if len(combined) > 8000:
-                combined = (
-                    combined[:8000]
-                    + "\n\n[Note: Output exceeded 8,000 characters and was capped. Please use SQL aggregations (e.g. SUM, COUNT, AVG, GROUP BY) or narrower filters to query specific subsets.]"
-                )
-
-            return combined
-
-    res_str = str(result)
-    if len(res_str) > 8000:
-        res_str = (
-            res_str[:8000]
-            + "\n\n[Note: Output capped at 8,000 characters. Please refine query with aggregation or narrower filters.]"
-        )
-    return res_str
+    more_rows = len(rows) > MAX_ROWS
+    return _format_rows(rows[:MAX_ROWS], more_rows)
