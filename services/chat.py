@@ -121,9 +121,8 @@ async def handle_chat_logic(
     # ---------------------------------------------------------
     # T10: REUSE DATASET FOR VISUALIZATION (0 LLM Calls)
     # ---------------------------------------------------------
-    if not last_finance_dataset.get(conversation_id):
-        # Restores a dataset persisted before a server restart
-        await load_session(conversation_id)
+    # Also restores a cached dataset persisted before a server restart
+    persisted_session = await load_session(conversation_id)
 
     if is_visualization_followup(question, conversation_id):
         cached_data = last_finance_dataset[conversation_id]
@@ -165,7 +164,6 @@ async def handle_chat_logic(
     # A reused session already holds the conversation (with platform prompt
     # caching and compaction), so only the new question is sent.
     # ---------------------------------------------------------
-    persisted_session = await load_session(conversation_id)
     session_id = persisted_session.get("session_id") if persisted_session else None
 
     if session_id and _cache_expired(persisted_session):
@@ -195,12 +193,48 @@ async def handle_chat_logic(
         )
 
     final_response = turn["final_response"]
-    if final_response.strip().strip(".").upper() == RELAY_MARKER or not final_response.strip():
+    coordinator_text = final_response.strip()
+    if coordinator_text.strip(".").upper() == RELAY_MARKER:
+        relay_outcome = "RELAY used"
+    elif not coordinator_text and turn["last_report"]:
+        relay_outcome = "No coordinator text, report shown"
+    elif turn["last_report"]:
+        relay_outcome = "Coordinator rewrote report"
+    else:
+        relay_outcome = "Coordinator answered directly"
+
+    if relay_outcome in ("RELAY used", "No coordinator text, report shown"):
         # T12: the coordinator relayed a sub-agent's report as the answer
         final_response = turn["last_report"]
     final_response = final_response or "Sorry, I could not generate a response."
     if turn["participating_agents"]:
         print("Agents participated:", ", ".join(turn["participating_agents"]))
+    print("Final answer:", relay_outcome)
+
+    # T12: One row per question showing how the final answer was produced, to
+    # measure how often the relay saves the coordinator's rewrite:
+    #   select "Output", count(*) from finance_ai_process_logs
+    #   where "Child_Agent" = 'Final Answer' group by "Output";
+    await create_process_log(
+        user_name=user_name,
+        user_id=user_id,
+        session_id=session_id,
+        conversation_id=conversation_id,
+        agent_id=coordination_agent.id,
+        agent_name=COORDINATOR_NAME,
+        env_id=ANTHROPIC_ENVIRONMENT_ID,
+        tool_id=None,
+        tool_req=None,
+        tool_response=None,
+        parent_agent=COORDINATOR_NAME,
+        child_agent="Final Answer",
+        input_data=question,
+        output_data=relay_outcome,
+        context_window=None,
+        input_tokens=None,
+        output_tokens=None,
+        model_used=MODEL_USED
+    )
 
     # S4 & Issue 28: Conditional deterministic currency conversion and response sanitization
     coordination_process = coordination_rule(question, result=final_response)
@@ -390,6 +424,9 @@ async def _run_agent_turn(
             report = _text_of(getattr(event, "content", None))
             if report:
                 state["last_report"] = report
+                # Only coordinator text written after the latest report is the
+                # answer; earlier text was an interim note ("Let me check...")
+                state["final_response"] = ""
                 if agent_name and agent_name not in state["participating_agents"]:
                     state["participating_agents"].append(agent_name)
                 sub_agent = AGENTS_BY_NAME.get(agent_name)
@@ -556,8 +593,10 @@ async def _run_agent_turn(
                                 done = True
                                 break
 
-                    # Stream closed by the server without a finishing event
-                    done = True
+                    if not done:
+                        # Stream closed without a finishing event - reconnect and
+                        # replay what was missed
+                        print(f"\n[A4] Stream closed early (attempt {stream_attempt}/{MAX_STREAM_RETRIES}); reconnecting")
 
             except anthropic.APIConnectionError as e:
                 # A4: Stream dropped/interrupted (includes timeouts) - reconnect
@@ -570,7 +609,13 @@ async def _run_agent_turn(
                         "Please try again."
                     )
 
-        agent_span.set_attribute("status", "success")
+        if not done and not state["final_response"]:
+            state["final_response"] = (
+                "The connection was interrupted and could not be recovered. "
+                "Please try again."
+            )
+
+        agent_span.set_attribute("status", "success" if done else "interrupted")
     finally:
         agent_span.end()
 
@@ -654,7 +699,7 @@ async def _answer_tool_call(event, state, session_id, question, conversation_id,
             await send_result(warning_text)
             return
 
-        # T8 & S1: Bounded JSON rows via asyncpg pool / read-only execution
+        # T8 & S1: Bounded JSON rows via the Supabase MCP server (read-only)
         tool_result = await fetch_finance_data(query)
 
         # S4: Convert database INR monetary values to USD at tool boundary
