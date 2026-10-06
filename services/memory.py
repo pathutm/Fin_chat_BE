@@ -53,7 +53,11 @@ async def persist_session(
         ).execute()
 
     # supabase-py is synchronous - run it off the event loop (A2)
-    await asyncio.to_thread(_upsert)
+    try:
+        await asyncio.to_thread(_upsert)
+    except Exception as e:
+        # Best-effort: the chat still answers; the next message opens a new session
+        print(f"[Session Store] [WARN] Could not save session: {e}")
 
 
 async def load_session(conversation_id: str) -> dict | None:
@@ -67,7 +71,12 @@ async def load_session(conversation_id: str) -> dict | None:
             .execute()
         )
 
-    result = await asyncio.to_thread(_select)
+    try:
+        result = await asyncio.to_thread(_select)
+    except Exception as e:
+        # Best-effort: without a stored session the chat creates a new one
+        print(f"[Session Store] [WARN] Could not load session: {e}")
+        return None
     if not (result.data and len(result.data) > 0):
         return None
 

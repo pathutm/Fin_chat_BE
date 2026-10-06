@@ -58,6 +58,18 @@ async def _execute_sql(query: str) -> str:
     if getattr(result, "isError", False):
         print(f"[DB Error] MCP execute_sql failed: {text}")
         raise RuntimeError(text or "Database query error")
+
+    # Supabase also reports failures (e.g. no access to the project) as a
+    # normal reply of the form {"error": {...}} - treat those as errors too
+    try:
+        reply = json.loads(text)
+    except ValueError:
+        reply = None
+    if isinstance(reply, dict) and reply.get("error"):
+        error = reply["error"]
+        message = error.get("message") if isinstance(error, dict) else str(error)
+        print(f"[DB Error] MCP execute_sql failed: {message}")
+        raise RuntimeError(message or "Database query error")
     return text
 
 
