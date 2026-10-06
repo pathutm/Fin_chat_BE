@@ -68,6 +68,9 @@ MAX_STREAM_RETRIES = 3
 
 # T9: Maximum database tool calls per question
 MAX_DB_CALLS = 3
+# Failed queries (SQL errors, blocked queries) don't use up a call, so the agent
+# can fix its SQL - but at most this many, so a turn makes 5 attempts at most
+MAX_FAILED_DB_CALLS = 2
 
 # T11: Platform-enforced spend cap per Managed Agents session, in US cents
 # (minor units, integer string). Default $1.00.
@@ -243,6 +246,28 @@ async def handle_chat_logic(
     final_response = coordination_process.get("converted_result", final_response)
     final_response = validate_and_sanitize_response(final_response)
 
+    # The answer returned to the user (same row as v2: Coordination Agent → User)
+    await create_process_log(
+        user_name=user_name,
+        user_id=user_id,
+        session_id=session_id,
+        conversation_id=conversation_id,
+        agent_id=coordination_agent.id,
+        agent_name=COORDINATOR_NAME,
+        env_id=ANTHROPIC_ENVIRONMENT_ID,
+        tool_id=turn["tool_id"],
+        tool_req=turn["tool_request"],
+        tool_response=turn["tool_response"],
+        parent_agent=COORDINATOR_NAME,
+        child_agent="User",
+        input_data=question,
+        output_data=final_response,
+        context_window=None,
+        input_tokens=None,
+        output_tokens=None,
+        model_used=MODEL_USED
+    )
+
     remember_turn(conversation_id, question, final_response)
 
     # A5: Update persisted session with latest dataset. If the session paused at
@@ -322,6 +347,7 @@ async def _run_agent_turn(
         "tool_response": None,
         "tool_id": None,
         "db_call_count": 0,
+        "db_failed_calls": 0,
         "budget_reached": False,
         "usage": None,
         "last_report": "",
@@ -538,7 +564,8 @@ async def _run_agent_turn(
             stream_attempt += 1
             try:
                 # A2/A4: Stream-first - open the stream, then send the message
-                async with async_client.beta.sessions.events.stream(session_id=session_id) as stream:
+                # stream() is async in the SDK: await it to open the stream, then iterate it
+                async with await async_client.beta.sessions.events.stream(session_id=session_id) as stream:
 
                     if not message_sent:
                         try:
@@ -656,12 +683,14 @@ async def _answer_tool_call(event, state, session_id, question, conversation_id,
             events=[result_event]
         )
 
-    # T9: Enforce runtime database call limit
-    state["db_call_count"] += 1
-    if state["db_call_count"] > MAX_DB_CALLS:
+    # T9: Enforce runtime database call limit (successful calls; failed ones are capped separately)
+    if (
+        state["db_call_count"] >= MAX_DB_CALLS
+        or state["db_failed_calls"] >= MAX_FAILED_DB_CALLS
+    ):
         print(
-            f"\n[T9 Tool Call Limit] Maximum {MAX_DB_CALLS} database calls reached "
-            f"(attempt {state['db_call_count']}). Blocking extra query."
+            f"\n[T9 Tool Call Limit] Database call limit reached "
+            f"({state['db_call_count']} successful, {state['db_failed_calls']} failed). Blocking extra query."
         )
         state["tool_response"] = (
             f"Error: Maximum allowed database tool calls ({MAX_DB_CALLS}) reached for this request. "
@@ -671,7 +700,26 @@ async def _answer_tool_call(event, state, session_id, question, conversation_id,
         await send_result(state["tool_response"])
         return
 
-    print(f"\n{FINANCE_NAME} → get_finance_data (call {state['db_call_count']}/{MAX_DB_CALLS})")
+    def failed(message: str) -> str:
+        """Count a failed call and tell the agent whether it may retry."""
+        state["db_failed_calls"] += 1
+        if state["db_failed_calls"] < MAX_FAILED_DB_CALLS:
+            return (
+                f"{message}\n\nThis failed query does not count toward the {MAX_DB_CALLS}-call limit. "
+                "Check the table and column names against the DATABASE schema in your "
+                "instructions, fix the query and call get_finance_data again."
+            )
+        return (
+            f"{message}\n\nNo more retries are allowed for this request. Answer with the data "
+            "already retrieved and say which part could not be computed."
+        )
+
+    print(
+        f"\n{FINANCE_NAME} → get_finance_data "
+        f"(call {state['db_call_count'] + 1}/{MAX_DB_CALLS}"
+        + (f", {state['db_failed_calls']} failed so far" if state["db_failed_calls"] else "")
+        + ")"
+    )
     print("SQL Query:", query)
 
     tool_span = tracer.start_span("chat.finance_tool")
@@ -698,11 +746,12 @@ async def _answer_tool_call(event, state, session_id, question, conversation_id,
             tool_span.set_attribute("validation.blocked", True)
             tool_span.set_attribute("validation.warnings", "; ".join(validation_warnings))
             tool_span.set_attribute("tool.status", "validation_blocked")
-            await send_result(warning_text)
+            await send_result(failed(warning_text))
             return
 
         # T8 & S1: Bounded JSON rows via the Supabase MCP server (read-only)
         tool_result = await fetch_finance_data(query)
+        state["db_call_count"] += 1
 
         # S4: Convert database INR monetary values to USD at tool boundary
         tool_result = convert_tool_result_currency(tool_result)
@@ -788,7 +837,7 @@ async def _answer_tool_call(event, state, session_id, question, conversation_id,
             model_used=MODEL_USED
         )
 
-        await send_result(state["tool_response"])
+        await send_result(failed(state["tool_response"]))
 
     finally:
         tool_span.end()

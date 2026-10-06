@@ -24,18 +24,6 @@ INR_TO_USD_RATE = get_inr_to_usd_rate()
 INR_PER_USD = get_inr_per_usd()
 
 
-NON_MONETARY_TERMS = {
-    "quantity", "qty", "count", "percent", "pct", "percentage",
-    "rate", "date", "month", "year", "day", "number", "status",
-    "terms", "name", "type", "category", "uom", "measure",
-    "diameter", "length", "pressure", "grade", "lot", "reason",
-    "currency", "match", "ratio", "units", "delivered", "accepted",
-    "rejected", "scrap", "available", "received", "consumed",
-    "consumption", "produced", "production", "orders", "batches",
-    "lines", "records", "items", "variance_quantity", "weight",
-    "volume", "hours", "days", "score"
-}
-
 MONETARY_TERMS = {
     "price", "cost", "amount", "spend", "revenue",
     "sales", "profit", "loss", "salary", "credit_limit",
@@ -57,30 +45,65 @@ def is_monetary_query(question: str) -> bool:
     return any(re.search(rf"\b{term}\b", q_lower) for term in MONETARY_TERMS)
 
 
+# Column/alias words (matched as whole words, not substrings) that mark a value as
+# money. Includes the words the agent uses in its own aliases (paid, outstanding,
+# balance, value, exposure ...), not only the schema's column names.
+MONETARY_COLUMN_WORDS = {
+    "price", "prices", "cost", "costs", "amount", "amounts", "amt",
+    "spend", "spent", "spending", "revenue", "revenues", "sales",
+    "profit", "profits", "loss", "losses", "salary", "salaries", "subtotal",
+    "freight", "discount", "discounts", "tax", "taxes", "budget",
+    "payable", "payables", "receivable", "receivables", "fee", "fees",
+    "wage", "wages", "turnover", "ebit", "ebitda", "cash",
+    "paid", "outstanding", "balance", "balances", "value", "valuation",
+    "exposure", "invoiced", "expense", "expenses", "overhead",
+}
+MONETARY_COLUMN_PHRASES = ("credit_limit", "gross_margin")
+
+# Words that make a value a count, quantity, ratio, date or flag - never money,
+# even next to a money word (e.g. "invoice_count", "tax_rate", "cost_variance_percent")
+NON_MONETARY_COLUMN_WORDS = {
+    "id", "qty", "quantity", "quantities", "count", "counts", "cnt",
+    "number", "num", "percent", "pct", "percentage", "ratio", "rate",
+    "date", "month", "year", "day", "days", "hours", "score",
+    "weight", "volume", "length", "diameter", "pressure", "uom", "units",
+    "match", "currency",
+    # identifiers and labels ("cost_centre_code", "gst_tax_category")
+    "code", "centre", "center", "name", "type", "category", "status",
+    # plural entities are counts ("outstanding_invoices", "paid_orders")
+    "invoices", "orders", "pos", "prs", "lines", "records", "items",
+    "vendors", "suppliers", "customers", "products", "transactions", "batches",
+}
+
+
 def is_monetary_column(col_name: str) -> bool:
     """
     Deterministically determines if a database column or alias represents a monetary value.
     Non-monetary fields (quantities, counts, dates, IDs, percentages, ratios) return False.
+
+    Only the measure part of an alias counts: in "amount_by_status" or
+    "cost_per_unit" the words after "by"/"per" describe the grouping, not the value.
     """
     if not col_name or not isinstance(col_name, str):
         return False
     name = col_name.strip().lower()
 
-    if name == "id" or name.endswith("_id") or name.startswith("id_"):
-        return False
-
     if name.endswith("_usd") or name.startswith("usd_"):
         return False
 
-    for term in NON_MONETARY_TERMS:
-        if term in name:
-            return False
+    words = [w for w in re.split(r"[^a-z0-9]+", name) if w]
+    for i, word in enumerate(words):
+        if i > 0 and word in ("by", "per"):
+            words = words[:i]
+            break
 
-    for term in MONETARY_TERMS:
-        if term in name:
-            return True
+    if any(w in NON_MONETARY_COLUMN_WORDS for w in words):
+        return False
 
-    return False
+    measure = "_".join(words)
+    if any(phrase in measure for phrase in MONETARY_COLUMN_PHRASES):
+        return True
+    return any(w in MONETARY_COLUMN_WORDS for w in words)
 
 
 def _convert_row_monetary_values(row: dict, value_map: dict | None = None) -> dict:
