@@ -13,6 +13,7 @@ from agents.client import async_client
 from agents.setup import (
     coordination_agent,
     finance_agent,
+    general_agent,
     AGENTS_BY_NAME,
     MODEL
 )
@@ -116,7 +117,8 @@ async def handle_chat_logic(
             tool_id=None,
             assistant_msg=greeting_response
         )
-        return greeting_response, "Greeting Handler"
+        # Greetings are the General Agent's job (answered here without a model call)
+        return greeting_response, general_agent.name
 
     # ---------------------------------------------------------
     # T10: REUSE DATASET FOR VISUALIZATION (0 LLM Calls)
@@ -147,7 +149,7 @@ async def handle_chat_logic(
             tool_id=None,
             assistant_msg=viz_response
         )
-        return viz_response, "Visualization Handler"
+        return viz_response, COORDINATOR_NAME
 
     if not coordination_agent.id:
         return (
