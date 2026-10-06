@@ -58,6 +58,15 @@ ant apply agents/coordinator.md                # create/update all three agents 
 
 This writes `claude-lock.json` (commit it). The server reads the agent IDs from there, or from `COORDINATION_AGENT_ID` / `FINANCE_AGENT_ID` / `GENERAL_AGENT_ID` in `.env`. Each later `ant apply` creates a new agent version instead of a new agent.
 
+**Updating agents whose IDs are in `.env`** (agents not created with `ant apply`, so there is no `claude-lock.json` - running `ant apply` would create duplicates). After editing `agents/*.md`:
+
+```bash
+python agents/sync_agents.py           # dry run: shows which agents changed
+python agents/sync_agents.py --apply   # pushes them - same IDs, new versions
+```
+
+It costs no tokens (configuration only). If the Finance or General Agent changes, the Coordination Agent is updated too, because it is pinned to their versions. New chats use the new versions; open chats switch after 5 idle minutes. Skill files (`agents/skills/`) are not synced by this script.
+
 ---
 
 ### 6. Database setup (once)
